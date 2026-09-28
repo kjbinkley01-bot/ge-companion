@@ -16,26 +16,45 @@ A free alternative to GE Tracker premium, built only on public, read-only data.
 * `run.py`: entry point (`--demo` for offline synthetic data, `--no-browser`, `--port`).
 * `geco/wiki.py`: Wiki prices API (`/mapping`, `/latest`, `/5m`, `/1h`, `/timeseries`) and
   hiscores (`index_lite.json`, per account type).
-* `geco/engine.py`: background poller, backfills the last 24 hourly windows, runs alerts.
-* `geco/market.py`: GE tax (2%, floor, 5m cap, exempt names in config), flip metrics, movers,
-  volume spike flags, high alch, decanting.
+* `geco/engine.py`: background poller. Backfills missing hourly windows (`backfill_hours`,
+  max 720) newest first, then the 5 minute windows the stability score needs, one bulk
+  request a second. Runs alerts, limit reset notices, hourly net worth snapshots, daily backups.
+* `geco/market.py`: GE tax (2%, floor, 5m cap, exempt names in config), fill model, flip
+  metrics, margin stability and trap flags, movers, volume spikes, decanting, alert conditions.
 * `geco/db.py`: SQLite (`data/ge_companion.sqlite3`): `h1` and `m5` price history, watchlist,
-  alerts, notifications, flips, hiscore snapshots, goals.
-* `geco/features.py`: flip log math, account view, goals.
+  alerts, notifications, flips, holdings, networth, drops, chase, custom recipes, goals.
+  Hourly and 5 minute stats aggregate in SQL. Column additions go in `MIGRATIONS`.
+* `geco/features.py`: flip log math and analytics, buy limit windows, portfolio, account view,
+  goals, boss drops and dry streaks, holdings paste parser.
+* `geco/recipes.py`: recipe engine (processing methods, item sets, custom recipes), priced live.
+  Recipe item names must match the Wiki mapping exactly.
+* `geco/analytics.py`: seasonality, category indices, correlation, backtester. Reads only saved
+  history, never the Wiki. `geco/categories.py`: name rules for index categories.
 * `geco/server.py`: JSON API plus static files, bound to 127.0.0.1.
-* `web/`: vanilla JS dashboard (`app.js`), no build step. Charts are hand-rolled SVG.
-* `data/`: runtime files (config, database, cached mapping). Git ignored.
+* `web/`: vanilla JS dashboard (`app.js`), no build step. Charts are hand-rolled SVG
+  (`priceChart`, `lineChart`, `barChart`, `heatmap`), colors are CSS tokens in `style.css`.
+* `tests/`: `python -m unittest discover -s tests` (standard library only).
+* `data/`: runtime files (config, database, backups, cached mapping). Git ignored.
 
 ## Price terms
 `high` = latest instant-buy price (what a seller receives), `low` = latest instant-sell price
 (what a patient buyer pays). Flip profit = high minus tax(high) minus low.
 
+## Fill model
+A patient buy at `low` fills against instant sells (`lv` volume); a sell at `high` fills against
+instant buys (`hv`). Estimates use `fill_share` (default 20%) of the slower side. Stability is the
+share of recent 5 minute windows where avg high minus tax beat avg low.
+
 ## Testing
-`python run.py --demo --no-browser --port 8799`, then hit `/api/status`, `/api/market`, etc.
-Demo data lives in `geco/demo.py` and uses a separate database and mapping cache.
+`python -m unittest discover -s tests`, then `python run.py --demo --no-browser --port 8799` and
+hit `/api/status`, `/api/market`, `/api/indices`, `/api/recipes`, etc. Demo data lives in
+`geco/demo.py` and uses a separate database and mapping cache; demo mode backfills 14 days
+instantly so every analytics view has data.
 
 ## Status
-v1 done: flip finder, movers, watchlist, dashboard alerts, flip log, high alch, decanting,
-account (hiscores, XP gains, goals with supply cost), item drawer with charts.
-Not yet verified against the live hiscores response format.
-Next: money making methods by live GP/hr, boss drop tracker with dry streaks, item set arbitrage.
+v2: everything in v1 plus a realistic fill model, margin stability and trap flags, buy limit
+tracking, slot planner, market indices, portfolio and net worth, money making by GP/hr, item set
+arbitrage, backtester, seasonality heatmap, correlations, composite and watchlist alerts, desktop
+notifications, KC gains, drop log with dry streaks, flip analytics, backups and export.
+Hiscores response format verified against the live endpoint (Sep 2026).
+Next: guide price tracking, clue reward values, custom index categories.

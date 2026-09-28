@@ -14,6 +14,8 @@ import json
 import re
 import time
 
+from .categories import JEWELLERY_WORDS
+
 NATURE_RUNE = 561
 DOSE_RE = re.compile(r"^(.*)\((\d)\)$")
 
@@ -173,9 +175,12 @@ def decant_opportunities(mapping, latest, tax):
     groups = {}
     for iid, m in mapping.items():
         mt = DOSE_RE.match(m["name"])
-        if not mt:
-            continue
-        groups.setdefault(mt.group(1).strip(), {})[int(mt.group(2))] = iid
+        if not mt or int(mt.group(2)) == 0:
+            continue  # "(0)" is an empty item, not a dose
+        base = mt.group(1).strip()
+        if any(w in base.lower() for w in JEWELLERY_WORDS + ("waterskin",)):
+            continue  # Bob Barter only decants potions, not charged jewellery or waterskins
+        groups.setdefault(base, {})[int(mt.group(2))] = iid
     out = []
     for base, doses in groups.items():
         if 4 not in doses or max(doses) != 4 or len(doses) < 2:

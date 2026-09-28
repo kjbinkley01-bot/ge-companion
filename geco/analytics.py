@@ -110,6 +110,35 @@ def index_universe(mapping, rows_by_id):
     return cats
 
 
+def cap_weights(ws, share):
+    """Scale down the biggest weights so none is more than `share` of the final total.
+
+    The capped items all end up at the same weight c, which satisfies
+    c = share * (k * c + rest) for k capped items. When there are too few items for
+    the cap to be possible at all, everything is weighted equally.
+    """
+    n = len(ws)
+    if n == 0:
+        return []
+    if n * share <= 1:
+        return [1.0] * n
+    order = sorted(range(n), key=lambda i: -ws[i])
+    rest = float(sum(ws))
+    if ws[order[0]] <= share * rest:
+        return list(ws)
+    for k in range(1, n):
+        rest -= ws[order[k - 1]]
+        if share * k >= 1:
+            break
+        c = share * rest / (1 - share * k)
+        if ws[order[k - 1]] >= c and ws[order[k]] <= c:
+            out = list(ws)
+            for i in order[:k]:
+                out[i] = c
+            return out
+    return [1.0] * n
+
+
 def compute_index(series_by_id, grid, cap_share=0.2):
     """Value weighted price index (start = 100) over a fixed time grid.
 
@@ -134,9 +163,7 @@ def compute_index(series_by_id, grid, cap_share=0.2):
         items.append((iid, prices, prices[first_t], gp))
     if not items:
         return [], []
-    total = sum(w for *_, w in items)
-    cap = total * cap_share if len(items) * cap_share >= 1 else total
-    weights = [min(w, cap) for *_, w in items]
+    weights = cap_weights([w for *_, w in items], cap_share)
     wsum = sum(weights) or 1.0
     out = []
     last = [1.0] * len(items)
@@ -166,13 +193,16 @@ def indices(db, mapping, rows_by_id, days=7, now=None):
     for v in cats.values():
         ids.update(v)
     data = db.bucketed(ids, start, b)
+    # Start the grid where saved history starts, so a young database still gets indices.
+    first = min((pts[0]["bt"] for pts in data.values() if pts), default=None)
+    if first is not None and first > start:
+        grid = [t for t in grid if t >= first]
     out = []
     for key in ["market"] + [k for k, _ in categories.CATEGORIES] + ["bigticket"]:
         members = cats.get(key) or []
         series, mem = compute_index({i: data[i] for i in members if i in data}, grid)
         if not series:
             continue
-        # Trim leading points before any item traded so the line starts at real data.
         first = series[0]["v"]
         chg = series[-1]["v"] / first - 1 if first else None
         back = max(0, len(series) - 1 - int(86400 // b))

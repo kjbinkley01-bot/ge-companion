@@ -23,7 +23,11 @@ function short(n) {
   return s + Math.round(a).toLocaleString("en-US");
 }
 function trim(x) { return x >= 100 ? x.toFixed(0) : x >= 10 ? x.toFixed(1) : x.toFixed(2); }
-function pct(x, digits = 1) { return x === null || x === undefined ? "-" : (x * 100).toFixed(digits) + "%"; }
+function pct(x, digits = 1) {
+  if (x === null || x === undefined) return "-";
+  const s = (x * 100).toFixed(digits);
+  return (/^-0(\.0*)?$/.test(s) ? s.slice(1) : s) + "%";  // no "-0.00%"
+}
 function signCls(x) { return x === null || x === undefined ? "" : x > 0 ? "pos" : x < 0 ? "neg" : ""; }
 function signed(x, f = gp) { if (x === null || x === undefined) return "-"; return (x > 0 ? "+" : "") + f(x); }
 function ago(sec) {

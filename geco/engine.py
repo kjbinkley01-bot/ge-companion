@@ -124,7 +124,8 @@ class Engine:
         pause = 0.0 if demo else 1.0  # be gentle with the Wiki
         now = int(time.time())
         now_hour = now // 3600 * 3600
-        missing = [now_hour - k * 3600 for k in range(2, hours + 2)
+        # A few windows past `hours` so the 24h change has a base on a fresh install.
+        missing = [now_hour - k * 3600 for k in range(1, hours + 5)
                    if not self.db.have_snapshot("h1", now_hour - k * 3600)]
         m5_hours = float(self.cfg.get("stability_hours", 6))
         now_5 = now // 300 * 300
@@ -268,7 +269,7 @@ class Engine:
         last_hour_seen = int(time.time()) // 3600
         last_prune = 0
         last_mapping = time.time()
-        last_jobs = 0
+        last_jobs = time.time() - 3600 + 600  # first run 10 minutes in, after the backfill
         while not self._stop.wait(2):
             now = time.time()
             try:
