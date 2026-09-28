@@ -27,6 +27,9 @@ DEFAULTS = {
     # How many hours of 5 minute history the margin stability score looks at.
     "stability_hours": 6,
     "notify_limit_reset": True,
+    # Days of daily market history to import from the Wiki's bulk /24h endpoint (one request
+    # per day of history, once). Feeds the forecast and its backtest. 0 turns it off.
+    "history_import_days": 365,
     # Daily copy of the database in data/backups, keeping this many (0 turns it off).
     "auto_backup_days": 7,
     # GE convenience fee (tax). Current rules: 2%, rounded down, 5m cap per item,

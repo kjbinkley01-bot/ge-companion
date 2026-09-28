@@ -54,6 +54,10 @@ Want to look around offline? Run `start.bat --demo` for synthetic prices.
   Settings, or raise History backfill (up to 30 days) for longer analytics from day one.
 * **Fills are shared.** Other flippers compete for the same trades, so estimates assume you
   win a share (20% by default, in Settings) of the volume you buy from and sell into.
+* **Market history import.** On first start the app also imports a year of daily prices and
+  volumes for every item (365 bulk requests, one a second, in the background). The forecast
+  uses it, and the Forecast tab can backtest and re-tune itself on it. Change the number of
+  days in Settings, or set it to 0 to skip.
 * **Backups.** A copy of the database is saved to `data/backups` once a day (the last 7 are
   kept). Settings has Back up now and a JSON export of everything you entered.
 * **Estimates, not guarantees.** Prices come from trades seen by RuneLite users. Price check

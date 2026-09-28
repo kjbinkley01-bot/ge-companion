@@ -170,6 +170,9 @@ class DemoClient:
         ts = timestamp or (int(time.time()) // 3600 * 3600 - 3600)
         return self._window(ts, 3600)
 
+    def one_day(self, timestamp):
+        return self._window(int(timestamp), 86400)
+
     def timeseries(self, item_id, lookback):
         step = {"6h": 300, "24h": 300, "7d": 3600, "30d": 21600, "6m": 86400, "1y": 86400}[lookback]
         span = {"6h": 6, "24h": 24, "7d": 168, "30d": 720, "6m": 4380, "1y": 8760}[lookback] * 3600

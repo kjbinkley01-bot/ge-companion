@@ -19,11 +19,45 @@ The model is deliberately simple and checks itself:
 Everything reads the saved hourly history, never the Wiki. Forecasts are estimates, and the
 further out they go, the more they are a statement about risk rather than a prediction.
 """
+import json
 import math
+import os
 import random
 import time
 
 DAY = 86400
+
+# Tunable settings. geco/forecast_eval.py backtests the model on imported market history and
+# searches these; the tuned values are saved to data/forecast_params.json and used from then on.
+DEFAULT_PARAMS = {
+    "roi_alpha": 0.1,     # smoothing of the daily margin (higher = recent days count more)
+    "vol_alpha": 0.1,     # smoothing of daily volume
+    "window": 90,         # days of margin and volume history the model looks at
+    "half_life": 0.25,    # days for today's live margin to fade halfway to the usual margin
+    "shrink": 0.8,        # scale on the expected margin (below 1 because forecasts ran hot)
+    "min_edge": 0.0025,   # only trade on days the expected margin (ROI) is above this
+    "trend": "off",       # "auto" / "on" / "off"; trends lost to "no change" in the backtest
+    "phi": 0.9,           # trend damping per day
+    "band": 2.0,          # width of the simulated margin range (calibrated for 8 in 10 coverage)
+    "price_band": 1.0,    # width of the simulated price range (calibrated the same way)
+    "level": 0.75,        # uncertainty in the item's average margin itself (regimes last weeks)
+}
+# The values above come from backtesting on a year of real market history (the 300 most
+# traded items, Sep 2025 to Sep 2026, 30 day forecasts, tuned on older dates and checked on
+# newer ones). The full report ships as forecast_baseline.json and shows in the Forecast tab.
+PARAMS_FILE = "forecast_params.json"
+
+
+def load_params(data_dir=None):
+    p = dict(DEFAULT_PARAMS)
+    if data_dir:
+        try:
+            with open(os.path.join(data_dir, PARAMS_FILE), "r", encoding="utf-8") as f:
+                saved = json.load(f).get("params", {})
+            p.update({k: v for k, v in saved.items() if k in DEFAULT_PARAMS})
+        except (OSError, ValueError, AttributeError):
+            pass
+    return p
 
 
 def daily_series(rows, tax, iid):
@@ -75,17 +109,17 @@ def holt(ys, alpha, beta, phi):
     return level, trend, errs
 
 
-def fit_holt(ys):
+def fit_holt(ys, phi=0.9):
     """Pick smoothing settings by one step error. Works on log prices."""
     best = None
     for a in (0.2, 0.35, 0.5, 0.7, 0.9):
         for b in (0.05, 0.15, 0.3):
-            lvl, tr, errs = holt(ys, a, b, 0.9)
+            lvl, tr, errs = holt(ys, a, b, phi)
             sse = sum(e * e for e in errs)
             if best is None or sse < best[0]:
                 best = (sse, a, b, lvl, tr, errs)
     _, a, b, lvl, tr, errs = best
-    return {"alpha": a, "beta": b, "phi": 0.9, "level": lvl, "trend": tr, "errs": errs}
+    return {"alpha": a, "beta": b, "phi": phi, "level": lvl, "trend": tr, "errs": errs}
 
 
 def trend_path(trend, phi, h):
@@ -93,12 +127,12 @@ def trend_path(trend, phi, h):
     return trend * sum(phi ** i for i in range(1, h + 1))
 
 
-def holdout(logp, k):
+def holdout(logp, k, phi=0.9):
     """Mean absolute % error of the trend model and of 'no change' on the last k days."""
     train, test = logp[:-k], logp[-k:]
     if len(train) < 4:
         return None
-    f = fit_holt(train)
+    f = fit_holt(train, phi)
     model = naive = 0.0
     for h, y in enumerate(test, 1):
         model += abs(math.exp(y - (f["level"] + trend_path(f["trend"], f["phi"], h))) - 1)
@@ -120,26 +154,26 @@ def _pct(sorted_vals, q):
     return sorted_vals[i]
 
 
-def build_model(days, row, limit, share=0.2, windows=2.0):
+def build_model(days, row, limit, share=0.2, windows=2.0, params=None):
     """Everything the forecast needs from an item's daily history and its live row."""
+    P = dict(DEFAULT_PARAMS, **(params or {}))
     if len(days) < 3:
         return None
-    logp = [math.log(d["price"]) for d in days]
-    fit = fit_holt(logp)
-    check = holdout(logp, min(7, len(logp) // 3)) if len(logp) >= 9 else None
-    use_trend = bool(check and check["model"] < check["naive"])
+    logp = [math.log(d["price"]) for d in days[-120:]]
+    fit = fit_holt(logp, P["phi"])
+    check = holdout(logp, min(7, len(logp) // 3), P["phi"]) if len(logp) >= 9 else None
+    if P["trend"] == "on":
+        use_trend = True
+    elif P["trend"] == "off":
+        use_trend = False
+    else:
+        use_trend = bool(check and check["model"] < check["naive"])
     trend = fit["trend"] if use_trend else 0.0
     # Daily step size: one step errors of the chosen model, or plain day to day changes.
     steps = fit["errs"] if use_trend else [b - a for a, b in zip(logp, logp[1:])]
     sigma = math.sqrt(sum(e * e for e in steps) / len(steps)) if steps else 0.02
     sigma = max(sigma, 0.002)
-    recent = days[-30:]
-    full = [d for d in recent if d["hours"] >= 20] or recent
-    hv = ewma([d["hv"] for d in full])
-    lv = ewma([d["lv"] for d in full])
-    rois = [d["roi"] for d in recent if d["roi"] is not None]
-    hist_roi = ewma(rois) if rois else None
-    held = [d["held"] for d in recent if d["held"] is not None]
+    mp = margin_part(days, P)
     live_price = None
     live_roi = None
     if row and row.get("high") and row.get("low"):
@@ -148,32 +182,49 @@ def build_model(days, row, limit, share=0.2, windows=2.0):
         if not row.get("trap") and not row.get("stale"):
             live_roi = row.get("roi")
     base_price = live_price or days[-1]["price"]
-    vol_ratios = []
-    for d in full:
-        slow = min(d["hv"], d["lv"])
-        base = min(hv, lv) or 1
-        vol_ratios.append(slow / base)
     cap = (limit * windows) if limit else float("inf")
-    return {
+    return dict(mp, **{
         "days": len(days), "fit": fit, "useTrend": use_trend, "trend": trend, "phi": fit["phi"],
-        "sigma": sigma, "check": check, "hv": hv, "lv": lv, "histRoi": hist_roi,
-        "liveRoi": live_roi, "rois": rois, "held": (sum(held) / len(held)) if held else None,
-        "basePrice": base_price, "volRatios": vol_ratios or [1.0], "cap": cap, "share": share,
+        "sigma": sigma, "check": check, "liveRoi": live_roi,
+        "basePrice": base_price, "cap": cap, "share": share,
         "limit": limit, "windows": windows,
         "spread": ((row["high"] - row["low"]) / base_price) if (row and row.get("high") and row.get("low")) else 0.0,
-    }
+    })
+
+
+def margin_part(days, P):
+    """Demand and margin estimates (the cheap half of the model, re-run by the tuner)."""
+    recent = days[-int(P["window"]):]
+    full = [d for d in recent if d["hours"] >= 20] or recent
+    hv = ewma([d["hv"] for d in full], P["vol_alpha"])
+    lv = ewma([d["lv"] for d in full], P["vol_alpha"])
+    rois = [d["roi"] for d in recent if d["roi"] is not None]
+    held = [d["held"] for d in recent if d["held"] is not None]
+    base = min(hv, lv) or 1
+    return {"hv": hv, "lv": lv, "rois": rois, "histRoi": ewma(rois, P["roi_alpha"]) if rois else None,
+            "held": (sum(held) / len(held)) if held else None,
+            "volRatios": [min(d["hv"], d["lv"]) / base for d in full] or [1.0],
+            "halfLife": P["half_life"], "shrink": P["shrink"], "band": P["band"],
+            "minEdge": P["min_edge"], "priceBand": P["price_band"], "level": P["level"], "params": P}
 
 
 def _roi_on_day(m, d):
-    """Live margin fading toward the historical average, halving the gap every day."""
+    """Live margin fading toward the historical average (halving every `half_life` days)."""
     hist, live = m["histRoi"], m["liveRoi"]
+    k = m.get("shrink", 1.0)
     if hist is None and live is None:
         return 0.0
     if hist is None:
-        return live
+        return live * k
     if live is None:
-        return hist
-    return hist + (live - hist) * 0.5 ** d
+        return hist * k
+    hl = max(0.05, m.get("halfLife", 1.0))
+    return (hist + (live - hist) * 0.5 ** (d / hl)) * k
+
+
+def trades(m, d):
+    """Whether the model would flip on day d: expected margin above the minimum edge."""
+    return _roi_on_day(m, d) > max(0.0, m.get("minEdge", 0.0))
 
 
 def expected(m, horizon):
@@ -183,7 +234,7 @@ def expected(m, horizon):
     for d in range(1, horizon + 1):
         price = m["basePrice"] * math.exp(trend_path(m["trend"], m["phi"], d))
         roi = _roi_on_day(m, d)
-        profit = max(0.0, roi) * price * qty  # you would not flip at a negative expected margin
+        profit = roi * price * qty if trades(m, d) else 0.0  # no flipping without an expected edge
         cum += profit
         out.append({"d": d, "price": price, "qty": qty, "roi": roi, "profit": profit, "cum": cum})
     return out
@@ -192,9 +243,8 @@ def expected(m, horizon):
 def simulate(m, horizon, paths=400, seed=7):
     """Monte Carlo paths of price and cumulative flip profit, returning percentile bands.
 
-    You flip on a day only when the model expects a profit that day and yesterday's margin
-    was positive, but the margin you actually get is drawn from real past days, so bad days
-    still cost money.
+    You flip on a day only when the model expects a profit that day, but the margin you
+    actually get is drawn from real past days, so bad days still cost money.
     """
     rng = random.Random(seed)
     base_q = min(m["cap"], m["share"] * min(m["hv"], m["lv"]))
@@ -202,19 +252,21 @@ def simulate(m, horizon, paths=400, seed=7):
     hist = m["histRoi"] if m["histRoi"] is not None else (sum(rois) / len(rois))
     price_at = [[] for _ in range(horizon)]
     cum_at = [[] for _ in range(horizon)]
+    mu = sum(rois) / len(rois)
+    sd = math.sqrt(sum((x - mu) ** 2 for x in rois) / len(rois)) if len(rois) > 1 else 0.0
     for _ in range(paths):
         logp = math.log(m["basePrice"])
         cum = 0.0
-        seen = _roi_on_day(m, 0)
+        # One persistent shift per path: the usual margin itself may be wrong for weeks.
+        shift = rng.gauss(0, m.get("level", 0.0) * sd)
         for d in range(1, horizon + 1):
-            logp += m["trend"] * m["phi"] ** d + rng.gauss(0, m["sigma"])
+            logp += m["trend"] * m["phi"] ** d + rng.gauss(0, m["sigma"] * m.get("priceBand", 1.0))
             price = math.exp(logp)
             # A drawn day keeps its spread around the average, plus the fading live signal.
-            roi = rng.choice(rois) - hist + _roi_on_day(m, d)
+            roi = (rng.choice(rois) - hist) * m.get("band", 1.0) + _roi_on_day(m, d) + shift
             qty = min(m["cap"], base_q * rng.choice(m["volRatios"]))
-            if seen > 0 and _roi_on_day(m, d) > 0:
+            if trades(m, d):
                 cum += roi * price * qty
-            seen = roi
             price_at[d - 1].append(price)
             cum_at[d - 1].append(cum)
     bands = []
@@ -253,12 +305,39 @@ def confidence(m):
     return "medium"
 
 
-def item_forecast(db, iid, row, mapping, tax, horizon=30, share=0.2, windows=2.0, history_days=90, now=None):
+def daily_from_d1(rows, tax, iid):
+    """Days from imported /24h windows (one row per day, volumes already full day)."""
+    out = []
+    for r in rows:
+        num = den = 0
+        if r["ah"] is not None and r["hv"]:
+            num += r["ah"] * r["hv"]
+            den += r["hv"]
+        if r["al"] is not None and r["lv"]:
+            num += r["al"] * r["lv"]
+            den += r["lv"]
+        if not den:
+            continue
+        roi = ((r["ah"] - tax(r["ah"], iid) - r["al"]) / r["al"]) if (r["ah"] is not None and r["al"]) else None
+        out.append({"t": r["ts"], "price": num / den, "hv": r["hv"], "lv": r["lv"], "roi": roi,
+                    "held": None, "hours": 24, "ah": r["ah"], "al": r["al"]})
+    return out
+
+
+def load_days(db, iid, tax, since, now):
+    """Imported daily history, then the app's own hourly history where it exists."""
+    hourly = daily_series(db.history("h1", iid, since), tax, iid)
+    first = hourly[0]["t"] if hourly else now
+    daily = [d for d in daily_from_d1(db.history("d1", iid, since), tax, iid) if d["t"] < first]
+    return daily + hourly
+
+
+def item_forecast(db, iid, row, mapping, tax, horizon=30, share=0.2, windows=2.0, history_days=180, now=None,
+                  params=None):
     now = now or time.time()
-    rows = db.history("h1", iid, now - history_days * DAY)
-    days = daily_series(rows, tax, iid)
+    days = load_days(db, iid, tax, now - history_days * DAY, now)
     limit = mapping.get(iid, {}).get("limit")
-    m = build_model(days, row, limit, share, windows)
+    m = build_model(days, row, limit, share, windows, params)
     if not m:
         return {"id": iid, "ok": False, "daysOfHistory": len(days),
                 "reason": "Needs at least 3 days of saved hourly history for this item."}
@@ -291,18 +370,22 @@ def item_forecast(db, iid, row, mapping, tax, horizon=30, share=0.2, windows=2.0
 
 
 def rank(db, mapping, rows_by_id, tax, horizon=30, share=0.2, windows=2.0, min_vol=1000, max_items=400,
-         history_days=60, now=None):
+         history_days=120, now=None, params=None):
     """Expected flip profit over the horizon for the liquid market, best first (no simulation)."""
     now = now or time.time()
     cand = [r for r in rows_by_id.values()
             if (r.get("vol24") or 0) >= min_vol and r.get("high") and r.get("low")]
     cand.sort(key=lambda r: -(r["vol24"] * (r["high"] + r["low"]) / 2))
     cand = cand[:max_items]
-    hist = db.history_many([r["id"] for r in cand], now - history_days * DAY)
+    since = now - history_days * DAY
+    hist = db.history_many([r["id"] for r in cand], since)
+    hist_d = db.history_many([r["id"] for r in cand], since, table="d1")
     out = []
     for r in cand:
-        days = daily_series(hist.get(r["id"], []), tax, r["id"])
-        m = build_model(days, r, mapping.get(r["id"], {}).get("limit"), share, windows)
+        hourly = daily_series(hist.get(r["id"], []), tax, r["id"])
+        first = hourly[0]["t"] if hourly else now
+        days = [d for d in daily_from_d1(hist_d.get(r["id"], []), tax, r["id"]) if d["t"] < first] + hourly
+        m = build_model(days, r, mapping.get(r["id"], {}).get("limit"), share, windows, params)
         if not m:
             continue
         exp = expected(m, horizon)

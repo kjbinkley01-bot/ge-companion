@@ -2,16 +2,18 @@
 import json
 import mimetypes
 import os
+import threading
 import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import analytics, config, features, forecast, market, recipes
+from . import analytics, config, features, forecast, forecast_eval, market, recipes
 from .wiki import ApiError
 
 
 SETTING_KEYS = ("user_agent", "latest_poll_seconds", "stale_minutes", "keep_5m_days", "keep_1h_days",
                 "alert_cooldown_minutes", "fill_share", "trap_gap_minutes", "stability_hours",
+                "history_import_days",
                 "backfill_hours", "notify_limit_reset", "auto_backup_days")
 
 
@@ -109,6 +111,7 @@ def make_handler(app):
                 st["h1Snapshots"] = D.snapshot_count("h1")
                 st["m5Snapshots"] = D.snapshot_count("m5")
                 st["m5Windows"] = E.m5_windows
+                st["d1Snapshots"] = D.snapshot_count("d1")
                 bdir = os.path.join(config.DATA_DIR, "backups")
                 st["backups"] = sorted(os.listdir(bdir))[-5:] if os.path.isdir(bdir) else []
                 return self._send(200, st)
@@ -211,15 +214,23 @@ def make_handler(app):
                 share = max(0.01, min(1.0, share / 100 if share > 1 else share))
                 windows = max(0.25, min(6.0, float(q.get("windows", 2))))
                 _, by_id = self._market_rows()
+                P, ver = E.forecast_params, E.params_version
                 if path == "/api/forecast":
                     iid = int(q["id"])
                     return self._send(200, analytics.cached(
-                        ("fc", iid, horizon, share, windows), 300,
-                        lambda: forecast.item_forecast(D, iid, by_id.get(iid), E.mapping, E.tax, horizon, share, windows)))
+                        ("fc", iid, horizon, share, windows, ver), 300,
+                        lambda: forecast.item_forecast(D, iid, by_id.get(iid), E.mapping, E.tax, horizon, share,
+                                                       windows, params=P)))
                 min_vol = float(q.get("minVol", 1000))
                 return self._send(200, analytics.cached(
-                    ("fcr", horizon, share, windows, min_vol), 600,
-                    lambda: forecast.rank(D, E.mapping, by_id, E.tax, horizon, share, windows, min_vol)))
+                    ("fcr", horizon, share, windows, min_vol, ver), 600,
+                    lambda: forecast.rank(D, E.mapping, by_id, E.tax, horizon, share, windows, min_vol, params=P)))
+            if path == "/api/forecast/report":
+                with E.lock:
+                    st = {"tune": E.status["tune"], "import": E.status["import"]}
+                return self._send(200, {"report": forecast_eval.load_report(config.DATA_DIR), "status": st,
+                                        "params": E.forecast_params, "defaults": forecast.DEFAULT_PARAMS,
+                                        "dailyDays": D.snapshot_count("d1")})
             if path == "/api/backtest/strategies":
                 return self._send(200, {"strategies": analytics.STRATEGIES,
                                         "hoursOfData": D.snapshot_count("h1")})
@@ -390,6 +401,13 @@ def make_handler(app):
                              float(b.get("xp") or 0), float(b.get("per_hour") or 0), json.dumps(ins),
                              json.dumps(outs), float(b.get("coins") or 0), now))
                 return self._send(200, {"rid": rid})
+            if path == "/api/forecast/tune":
+                started = E.tune_forecast(max(7, min(90, int(b.get("horizon") or 30))))
+                return self._send(200, {"started": started})
+            if path == "/api/import":
+                days = max(1, min(1095, int(b.get("days") or app.cfg.get("history_import_days", 365))))
+                threading.Thread(target=E.import_daily, args=(days,), daemon=True).start()
+                return self._send(200, {"started": True, "days": days})
             if path == "/api/backtest":
                 _, by_id = self._market_rows()
                 return self._send(200, analytics.backtest(D, E.mapping, by_id, E.tax, b))
@@ -403,7 +421,7 @@ def make_handler(app):
                     changed["user_agent"] = str(b["user_agent"]).strip()[:200]
                 for k in ("latest_poll_seconds", "stale_minutes", "keep_5m_days", "keep_1h_days",
                           "alert_cooldown_minutes", "trap_gap_minutes", "stability_hours",
-                          "backfill_hours", "auto_backup_days"):
+                          "backfill_hours", "auto_backup_days", "history_import_days"):
                     if k in b and b[k] not in (None, ""):
                         changed[k] = max(0, int(float(b[k])))
                 if "latest_poll_seconds" in changed:
@@ -423,6 +441,8 @@ def make_handler(app):
                     app.client.user_agent = changed["user_agent"]
                 if "stability_hours" in changed:
                     E.refresh_m5_stats()
+                if changed.get("history_import_days"):
+                    threading.Thread(target=E.import_daily, daemon=True).start()
                 E.rebuild()
                 return self._send(200, {"ok": True, "note": "Poll interval and backfill changes apply after a restart."})
             return self._send(404, {"error": "unknown endpoint"})

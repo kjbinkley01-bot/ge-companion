@@ -12,7 +12,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from geco import analytics, categories, config, features, forecast, market, recipes  # noqa: E402
+from geco import analytics, categories, config, features, forecast, forecast_eval, market, recipes  # noqa: E402
 from geco.db import DB, wprice  # noqa: E402
 
 MAPPING = {
@@ -22,6 +22,12 @@ MAPPING = {
     4: {"id": 4, "name": "Part B", "limit": 8, "members": True},
     5: {"id": 5, "name": "Gadget set", "limit": 8, "members": True},
 }
+
+
+# Plain model mechanics (no shrink, no minimum edge, trend allowed), independent of whatever
+# settings the backtest tuned into forecast.DEFAULT_PARAMS.
+RAW = dict(forecast.DEFAULT_PARAMS, roi_alpha=0.3, vol_alpha=0.3, window=30, half_life=1.0, shrink=1.0,
+           min_edge=0.0, trend="auto")
 
 
 def tax():
@@ -366,7 +372,8 @@ class ForecastTests(TempDB):
     def test_trend_detected_and_checked(self):
         now = self._store(30, lambda d: 1000 * (1.01 ** d))
         row = {"high": 1400, "low": 1340, "roi": 0.02}
-        f = forecast.item_forecast(self.db, 1, row, MAPPING, tax(), horizon=10, share=0.5, windows=2, now=now)
+        f = forecast.item_forecast(self.db, 1, row, MAPPING, tax(), horizon=10, share=0.5, windows=2, now=now,
+                                   params=RAW)
         self.assertTrue(f["ok"])
         self.assertTrue(f["summary"]["useTrend"])
         # Rising about 1% a day; the damped trend projects less than a straight line (10.5%).
@@ -377,13 +384,19 @@ class ForecastTests(TempDB):
     def test_flat_market_profit_matches_demand_and_margin(self):
         now = self._store(20, lambda d: 1000 + 5 * math.sin(d * 7))
         row = {"high": 1050, "low": 1000, "roi": 0.029}
-        f = forecast.item_forecast(self.db, 1, row, MAPPING, tax(), horizon=10, share=0.5, windows=2, now=now)
+        f = forecast.item_forecast(self.db, 1, row, MAPPING, tax(), horizon=10, share=0.5, windows=2, now=now,
+                                   params=RAW)
         s = f["summary"]
         self.assertEqual(s["dailyQty"], 120)        # min(limit 100 x 2 windows, 50% of 240 a side)
         # Margin stays about 2.95% after tax on the live mid price (1025), 120 a day for 10 days.
         self.assertAlmostEqual(s["profit"], 0.0295 * 1025 * 120 * 10, delta=500)
         self.assertLessEqual(s["p10"], s["p50"])
         self.assertLessEqual(s["p50"], s["p90"])
+        # The shipped (backtest tuned) settings scale the expected margin by `shrink`.
+        tuned = forecast.item_forecast(self.db, 1, row, MAPPING, tax(), horizon=10, share=0.5, windows=2, now=now)
+        self.assertAlmostEqual(tuned["summary"]["profit"],
+                               s["profit"] * forecast.DEFAULT_PARAMS["shrink"], delta=s["profit"] * 0.05)
+        self.assertFalse(tuned["summary"]["useTrend"])
 
     def test_live_margin_fades(self):
         m = {"histRoi": 0.01, "liveRoi": 0.05}
@@ -412,6 +425,64 @@ class ForecastTests(TempDB):
         now = self._store(2, lambda d: 1000)
         f = forecast.item_forecast(self.db, 1, None, MAPPING, tax(), now=now)
         self.assertFalse(f["ok"])
+
+
+class ForecastEvalTests(TempDB):
+    def _import(self, days, roi_fn, now):
+        start = int(now // 86400 * 86400 - days * 86400)
+        for k in range(days):
+            ts = start + k * 86400
+            data = {}
+            for iid in (1, 3, 4):
+                p = 1000 * iid
+                roi = roi_fn(iid, k)
+                al = p
+                ah = int(round((al * (1 + roi) + 1) / 0.98))  # roughly roi after 2% tax
+                data[str(iid)] = {"avgHighPrice": ah, "highPriceVolume": 1000, "avgLowPrice": al, "lowPriceVolume": 1000}
+            self.db.store_window("d1", ts, data)
+        return start
+
+    def test_realized_follows_model_rule(self):
+        m = {"histRoi": 0.02, "liveRoi": None, "shrink": 1.0, "halfLife": 1.0, "cap": 50, "share": 0.2}
+        fut = [{"roi": 0.01, "price": 100, "hv": 1000, "lv": 1000}, {"roi": -0.02, "price": 100, "hv": 100, "lv": 1000}]
+        # 50 units capped on day 1 (0.2 * 1000 = 200 > 50), 20 units on day 2.
+        self.assertAlmostEqual(forecast_eval.realized_profit(m, fut), 0.01 * 100 * 50 - 0.02 * 100 * 20)
+        m["histRoi"] = -0.01
+        self.assertEqual(forecast_eval.realized_profit(m, fut), 0)   # model says do not trade
+
+    def test_walk_forward_scores_a_steady_market_well(self):
+        now = time.time()
+        self._import(200, lambda iid, k: 0.01 * iid, now)
+        series = forecast_eval.universe(self.db, MAPPING, tax(), now, top=10, min_days=150)
+        self.assertEqual(set(series), {1, 3, 4})
+        cs = forecast_eval.cases(series, MAPPING, 30, step=14, params=RAW)
+        self.assertTrue(cs)
+        # No case may see its own future.
+        for c in cs:
+            self.assertLess(c["hist"][-1]["t"], c["fut"][0]["t"])
+        sc = forecast_eval.score(cs, RAW, 30)
+        self.assertLess(sc["wape"], 0.1)
+        train, test = forecast_eval._split(cs)
+        self.assertTrue(train and test)
+        self.assertLess(max(c["cut"] for c in train), min(c["cut"] for c in test))
+
+    def test_spearman(self):
+        self.assertAlmostEqual(forecast_eval._spearman([1, 2, 3, 4], [10, 20, 30, 40]), 1.0)
+        self.assertAlmostEqual(forecast_eval._spearman([1, 2, 3, 4], [4, 3, 2, 1]), -1.0)
+        # Ranking everything equal is not a perfect ranking.
+        self.assertEqual(forecast_eval._spearman([0, 0, 0, 0], [1, 2, 3, 4]), 0.0)
+
+    def test_objective_cannot_win_by_never_trading(self):
+        silent = {"top10": 0.0, "top10Error": None, "spearman": 0.0}
+        useful = {"top10": 0.4, "top10Error": 0.3, "spearman": 0.6}
+        self.assertLess(forecast_eval.objective(useful), forecast_eval.objective(silent))
+
+    def test_bundled_report_matches_shipped_defaults(self):
+        rep = forecast_eval.load_report("/nonexistent")
+        self.assertIsNotNone(rep)
+        for k, v in forecast.DEFAULT_PARAMS.items():
+            if k in rep["params"] and k != "phi":
+                self.assertEqual(rep["params"][k], v, k)
 
 
 class CategoryTests(unittest.TestCase):

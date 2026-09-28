@@ -33,6 +33,11 @@ A free alternative to GE Tracker premium, built only on public, read-only data.
 * `geco/forecast.py`: long term profit forecast. Daily series from `h1`, damped trend (Holt)
   on log price kept only if it beats a flat forecast on held out days, smoothed per side
   volume, live ROI fading to the historical ROI, Monte Carlo bands from resampled past days.
+* `geco/forecast_eval.py`: walk-forward backtest and tuner for the forecast on imported daily
+  history (`d1` table, filled from the Wiki's bulk `/24h` windows by `Engine.import_daily`).
+  Tunes on older dates, adopts new settings only if they also win on held out newer dates.
+  The shipped `DEFAULT_PARAMS` and `geco/forecast_baseline.json` come from a run on a year of
+  real data; re-run and update both together if the model changes.
 * `geco/server.py`: JSON API plus static files, bound to 127.0.0.1.
 * `web/`: vanilla JS dashboard (`app.js`), no build step. Charts are hand-rolled SVG
   (`priceChart`, `lineChart`, `barChart`, `heatmap`), colors are CSS tokens in `style.css`.

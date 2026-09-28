@@ -5,7 +5,7 @@ import os
 import threading
 import time
 
-from . import analytics, features, market, recipes
+from . import analytics, features, forecast, forecast_eval, market, recipes
 from .config import DATA_DIR
 
 log = logging.getLogger("geco")
@@ -29,8 +29,12 @@ class Engine:
         self._cooldowns = {}  # (alert id, item id) -> last fired, for watchlist-wide alerts
         self._limit_check = time.time()
         self.status = {"started": int(time.time()), "last_latest": None, "last_5m": None,
-                       "last_1h": None, "backfill": "pending", "errors": []}
+                       "last_1h": None, "backfill": "pending", "errors": [],
+                       "import": "idle", "tune": "idle"}
         self._stop = threading.Event()
+        self._import_lock = threading.Lock()
+        self.forecast_params = forecast.load_params(DATA_DIR)
+        self.params_version = 0
 
     # Status helpers -------------------------------------------------------------
     def _err(self, where, e):
@@ -160,6 +164,72 @@ class Engine:
         self.refresh_m5_stats()
         self.rebuild()
         analytics.clear_cache()
+        self.import_daily()
+
+    def import_daily(self, days=None):
+        """Import daily market history from the Wiki's bulk /24h windows (all items per request).
+
+        Only missing days are fetched, newest first, one request a second, so after the first
+        run this is one request a day. Used by the forecast model and its backtest.
+        """
+        days = int(days if days is not None else self.cfg.get("history_import_days", 365))
+        days = max(0, min(1095, days))
+        if not days or not self._import_lock.acquire(blocking=False):
+            return
+        try:
+            demo = getattr(self.client, "is_demo", False)
+            if demo:
+                days = min(days, 200)
+            today = int(time.time()) // 86400 * 86400
+            missing = [today - k * 86400 for k in range(1, days + 1)
+                       if not self.db.have_snapshot("d1", today - k * 86400)]
+            for i, ts in enumerate(missing):
+                if self._stop.is_set():
+                    return
+                with self.lock:
+                    self.status["import"] = f"{i}/{len(missing)} days"
+                try:
+                    resp = self.client.one_day(ts)
+                    self.db.store_window("d1", resp.get("timestamp") or ts, resp.get("data") or {})
+                except Exception as e:
+                    self._err("history import", e)
+                if not demo:
+                    time.sleep(1.0)  # be gentle with the Wiki
+            if missing:
+                analytics.clear_cache()
+        finally:
+            with self.lock:
+                self.status["import"] = "done"
+            self._import_lock.release()
+
+    def tune_forecast(self, horizon=30):
+        """Backtest the forecast on imported history and adopt the tuned settings."""
+        with self.lock:
+            if self.status["tune"].startswith("running"):
+                return False
+            self.status["tune"] = "running: starting"
+
+        def say(msg):
+            with self.lock:
+                self.status["tune"] = "running: " + msg
+
+        def job():
+            try:
+                share = float(self.cfg.get("fill_share", 0.2))
+                report = forecast_eval.run(self.db, self.mapping, self.tax, horizon=horizon, share=share,
+                                           progress=say, start=self.forecast_params)
+                forecast_eval.save(report, DATA_DIR)
+                with self.lock:
+                    self.forecast_params = forecast.load_params(DATA_DIR)
+                    self.params_version += 1
+                    self.status["tune"] = "done"
+                analytics.clear_cache()
+            except Exception as e:
+                self._err("forecast tuning", e)
+                with self.lock:
+                    self.status["tune"] = f"failed: {e}"
+        threading.Thread(target=job, daemon=True, name="tune").start()
+        return True
 
     def rebuild(self):
         with self.lock:
@@ -220,7 +290,8 @@ class Engine:
                         (now, None, iid, f"{name} buy limit has reset (you bought {used:,} last window)"))
 
     def hourly_jobs(self):
-        """Net worth snapshot and a daily database backup."""
+        """Net worth snapshot, yesterday's daily history window and a daily database backup."""
+        threading.Thread(target=self.import_daily, daemon=True, name="import").start()
         try:
             features.networth_snapshot(self.db, self)
         except Exception as e:

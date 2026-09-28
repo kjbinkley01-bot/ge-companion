@@ -1120,6 +1120,7 @@ renderers.forecast = async function (host) {
       <label class="field"><span>Min 24h volume</span><input class="input" id="fcVol" value="${esc(FC.minVol)}"></label>
       <label class="field wide"><span>Filter by name</span><input class="input" id="fcQ" value="${esc(FC.q)}"></label>
     </div>
+    <details class="card" id="fcAcc" style="margin-bottom:14px" ${store.get("fcAccOpen", false) ? "open" : ""}><summary>Model accuracy <span class="muted small" id="fcAccHint"></span></summary><div id="fcAccBody" style="margin-top:10px"></div></details>
     <div id="fcDetail"></div>
     <div id="fcInfo" class="muted small" style="margin-bottom:6px"></div>
     <div class="table-wrap" id="fcTable"><div class="empty">Building forecasts...</div></div>`;
@@ -1129,9 +1130,53 @@ renderers.forecast = async function (host) {
   $("#fcShare", host).onchange = (e) => { FC.share = e.target.value; reload(); };
   $("#fcVol", host).onchange = (e) => { FC.minVol = e.target.value; store.set("fc", FC); loadForecastRank(host); };
   $("#fcQ", host).oninput = (e) => { FC.q = e.target.value; store.set("fc", FC); drawForecastRank(host); };
+  $("#fcAcc", host).addEventListener("toggle", (e) => store.set("fcAccOpen", e.target.open));
   loadForecastRank(host);
+  loadAccuracy(host);
   if (FC.sel) loadForecastDetail(host, FC.sel);
 };
+let FC_POLL = null;
+async function loadAccuracy(host) {
+  let d;
+  try { d = await api("/api/forecast/report"); } catch (e) { return; }
+  const body = $("#fcAccBody", host), hint = $("#fcAccHint", host);
+  if (!body) return;
+  const r = d.report, running = d.status.tune.startsWith("running");
+  const importing = d.status.import !== "done" && d.status.import !== "idle";
+  hint.textContent = running ? "Tuning..." : r ? `tested on ${gp(r.testCases)} past forecasts` : "not tested yet";
+  const m = (x) => (x == null ? "-" : pct(x, 0));
+  const row = (label, a, b, fmt, better) => `<tr class="static"><td>${label}</td><td class="num">${fmt(a)}</td><td class="num"><b>${fmt(b)}</b></td><td class="num">${a == null || b == null ? "" : (better(b, a) ? `<span class="pos">better</span>` : `<span class="muted">same or worse</span>`)}</td></tr>`;
+  let html = "";
+  if (r) {
+    const bt = r.before.test, at = r.after.test, cb = r.coverage.before, ca = r.coverage.after;
+    html += `<p class="small" style="margin:0 0 8px">${r.bundled ? "The shipped settings were tuned this way. " : ""}Backtested on <b>${r.items}</b> of the most traded items over <b>${r.days}</b> days of real market history. Forecasts were made from past dates using only earlier data, then compared with what following them really made over the next ${r.horizon} days. Settings were tuned on the older ${gp(r.trainCases)} forecasts and checked on the newer ${gp(r.testCases)} they never saw (below). ${r.bundled ? "Run it on your own imported history with the button below." : `Last run ${esc(fmtTime(r.ranAt, true))}.`}</p>
+      ${r.adopted === false ? `<div class="callout">The last re-tune found settings that only fit older dates better, not the held out ones, so your current settings were kept. That is the safeguard working, not an error.</div>` : ""}
+      <div class="table-wrap"><table>${thead([{ label: `Held out test, ${r.horizon} day forecasts` }, { label: "Before tuning", num: 1 }, { label: "After tuning", num: 1 }, { label: "" }], null)}<tbody>
+      ${row("Top 10 picks: share of the best possible profit they really made", bt.top10, at.top10, m, (b, a) => b > a)}
+      ${row("Top 10 picks: forecast vs what they really made (error)", bt.top10Error, at.top10Error, m, (b, a) => b < a)}
+      ${row("Forecast trades that really made money", bt.profitableShare, at.profitableShare, m, (b, a) => b > a)}
+      ${row("All forecasts: total forecast vs real", bt.bias, at.bias, (x) => (x == null ? "-" : (x > 0 ? "+" : "") + pct(x, 0)), (b, a) => Math.abs(b) < Math.abs(a))}
+      ${row("Profit error per item (lower is better)", bt.nwape, at.nwape, m, (b, a) => b < a)}
+      ${row("Real profit inside the likely range (aim 80%)", cb.profit, ca.profit, m, (b, a) => Math.abs(b - 0.8) < Math.abs(a - 0.8))}
+      ${row("Real price inside the likely range (aim 80%)", cb.price, ca.price, m, (b, a) => Math.abs(b - 0.8) < Math.abs(a - 0.8))}
+      </tbody></table></div>
+      <p class="small muted" style="margin:8px 0 0">Price in ${r.horizon} days: off by ${pct(r.price.test.model, 1)} on average, vs ${pct(r.price.test.naive, 1)} assuming no change. Assuming today's margin simply lasts would have been off by ${m(r.naive.test.wape)}.
+      ${Object.entries(r.otherHorizons || {}).map(([h, o]) => ` ${h} day forecasts: top picks made ${m(o.before.top10)} of the best possible before, ${m(o.after.top10)} after.`).join("")}</p>
+      <p class="small muted" style="margin:6px 0 0">Tuned settings: margin smoothing ${r.params.roi_alpha}, volume smoothing ${r.params.vol_alpha}, ${r.params.window} day window, live margin half-life ${r.params.half_life} days, margin scale ${r.params.shrink}, price trend ${esc(r.params.trend)}${r.params.trend !== "off" ? ` (damping ${r.params.phi})` : ""}, minimum edge ${pct(r.params.min_edge, 2)}, range width ${r.params.band} / level ${r.params.level ?? 0} / price ${r.params.price_band ?? 1}.</p>`;
+  } else {
+    html += `<p class="small" style="margin:0 0 8px">The model ships with settings tuned on a year of real market history. You can re-run the backtest on your own imported history at any time.</p>`;
+  }
+  html += `<div class="inline-form"><button class="btn primary" id="fcTune" ${running || d.dailyDays < 180 ? "disabled" : ""}>${running ? esc(d.status.tune.replace("running: ", "")) + "..." : "Backtest and re-tune"}</button>
+    <span class="small muted">${d.dailyDays < 180 ? `Needs 180+ days of imported history (you have ${d.dailyDays}${importing ? `, importing ${esc(d.status.import)}` : ""}). ` : `${gp(d.dailyDays)} days of history imported. `}Takes a few minutes; the app keeps working meanwhile.</span></div>
+    ${d.status.tune.startsWith("failed") ? `<div class="small err">${esc(d.status.tune)}</div>` : ""}`;
+  body.innerHTML = html;
+  const b = $("#fcTune", host);
+  if (b) b.onclick = async () => { await api("/api/forecast/tune", { method: "POST", body: { horizon: 30 } }); loadAccuracy(host); };
+  clearTimeout(FC_POLL);
+  if (running) FC_POLL = setTimeout(() => { if (S.tab === "forecast") { loadAccuracy(host); } }, 4000);
+  else if (hint.dataset.was === "running") loadForecastRank(host);
+  hint.dataset.was = running ? "running" : "";
+}
 async function loadForecastRank(host) {
   try { FC_DATA = await api(`/api/forecast/rank?${fcQuery(`&minVol=${numOr(FC.minVol, 0)}`)}`); }
   catch (e) { $("#fcTable", host).innerHTML = `<div class="notice">${esc(e.message)}</div>`; return; }
@@ -1467,6 +1512,7 @@ renderers.settings = async function (host) {
           <label class="field" title="Share of an item's instant-sell and instant-buy volume you expect to win against other flippers"><span>Your fill share %</span><input class="input" id="stShare" value="${Math.round((cfg.fill_share || 0.2) * 100)}"></label>
           <label class="field" title="Flag a margin as a possible trap when its two prices traded this far apart"><span>Trap gap (min)</span><input class="input" id="stTrap" value="${cfg.trap_gap_minutes}"></label>
           <label class="field" title="Hours of 5 minute history behind the stability score"><span>Stability window (h)</span><input class="input" id="stStab" value="${cfg.stability_hours}"></label>
+          <label class="field" title="Days of daily market history to import from the Wiki (bulk, one request per day of history, once). Used by the forecast and its backtest."><span>Import history (days)</span><input class="input" id="stImp" value="${cfg.history_import_days}"></label>
           <label class="field" title="Daily database copies to keep in data/backups (0 turns it off)"><span>Daily backups kept</span><input class="input" id="stBk" value="${cfg.auto_backup_days}"></label>
           <label class="check"><input type="checkbox" id="stLim" ${cfg.notify_limit_reset ? "checked" : ""}> Alert me when a buy limit resets</label>
         </div>
@@ -1480,6 +1526,7 @@ renderers.settings = async function (host) {
         <span class="k">5 minute snapshots saved</span><span>${gp(st.m5Snapshots)} (${gp(st.m5Windows)} in the stability window)</span>
         <span class="k">Database size</span><span>${short(st.dbBytes / 1024)} KB</span>
         <span class="k">GE tax</span><span>${(cfg.tax_rate * 100).toFixed(1)}%, capped at ${short(cfg.tax_cap)} per item</span>
+        <span class="k">Daily history imported</span><span>${gp(st.d1Snapshots)} days${st.import !== "done" && st.import !== "idle" ? ` (importing ${esc(st.import)})` : ""}</span>
         <span class="k">Latest backups</span><span>${st.backups.length ? st.backups.slice(-3).map(esc).join("<br>") : "None yet"}</span>
       </div>
       <div class="inline-form"><button class="btn" id="stBackup">Back up now</button><a class="btn" href="/api/export">Export my data (JSON)</a><span id="stBkMsg" class="small muted"></span></div>
@@ -1490,7 +1537,7 @@ renderers.settings = async function (host) {
   $("#stSave", host).onclick = async () => {
     const v = (id) => $(id, host).value;
     try {
-      const r = await api("/api/settings", { method: "POST", body: { user_agent: v("#stUA"), latest_poll_seconds: v("#stPoll"), stale_minutes: v("#stStale"), alert_cooldown_minutes: v("#stCool"), keep_5m_days: v("#st5"), keep_1h_days: v("#st1"), backfill_hours: v("#stBack"), fill_share: v("#stShare"), trap_gap_minutes: v("#stTrap"), stability_hours: v("#stStab"), auto_backup_days: v("#stBk"), notify_limit_reset: $("#stLim", host).checked } });
+      const r = await api("/api/settings", { method: "POST", body: { user_agent: v("#stUA"), latest_poll_seconds: v("#stPoll"), stale_minutes: v("#stStale"), alert_cooldown_minutes: v("#stCool"), keep_5m_days: v("#st5"), keep_1h_days: v("#st1"), backfill_hours: v("#stBack"), fill_share: v("#stShare"), trap_gap_minutes: v("#stTrap"), stability_hours: v("#stStab"), auto_backup_days: v("#stBk"), history_import_days: v("#stImp"), notify_limit_reset: $("#stLim", host).checked } });
       $("#stMsg", host).textContent = "Saved. " + (r.note || "");
       loadMarket();
     } catch (e) { $("#stMsg", host).innerHTML = `<span class="err">${esc(e.message)}</span>`; }
