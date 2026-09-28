@@ -1,0 +1,410 @@
+{
+ "horizon": 30,
+ "items": 300,
+ "days": 365,
+ "cases": 11881,
+ "trainCases": 8903,
+ "testCases": 2978,
+ "trainUntil": 1781654400,
+ "params": {
+  "roi_alpha": 0.1,
+  "vol_alpha": 0.1,
+  "window": 90,
+  "half_life": 0.25,
+  "shrink": 0.8,
+  "min_edge": 0.0025,
+  "trend": "off",
+  "phi": 0.9,
+  "band": 2.0,
+  "price_band": 1.0,
+  "level": 0.75
+ },
+ "defaults": {
+  "roi_alpha": 0.3,
+  "vol_alpha": 0.3,
+  "window": 30,
+  "half_life": 1.0,
+  "shrink": 1.0,
+  "min_edge": 0.0,
+  "trend": "auto",
+  "phi": 0.9,
+  "band": 1.0,
+  "price_band": 1.0,
+  "level": 0.0
+ },
+ "before": {
+  "train": {
+   "wape": 0.8370813649926684,
+   "nwape": 0.7219695187509082,
+   "bias": 0.8116895756589337,
+   "tradedCases": 2698,
+   "profitableShare": 0.7286879169755375,
+   "spearman": 0.49290894447401706,
+   "top10": 0.5176553609526855,
+   "top10Error": 0.5989043327401387,
+   "forecast": 58785912045.651665,
+   "realized": 32448115193.39372,
+   "cases": 8903
+  },
+  "test": {
+   "wape": 1.0609524362789475,
+   "nwape": 0.7161705801076453,
+   "bias": 2.301612784713679,
+   "tradedCases": 968,
+   "profitableShare": 0.7727272727272727,
+   "spearman": 0.6069183228825469,
+   "top10": 0.1357787109341238,
+   "top10Error": 1.2684616351903701,
+   "forecast": 20072469798.52832,
+   "realized": 6079595369.712332,
+   "cases": 2978
+  }
+ },
+ "after": {
+  "train": {
+   "wape": 0.41813067629890366,
+   "nwape": 0.4503412472689896,
+   "bias": 0.00483882903542443,
+   "tradedCases": 1153,
+   "profitableShare": 0.9505637467476149,
+   "spearman": 0.8978807098964314,
+   "top10": 0.5994115180206321,
+   "top10Error": 0.037027949794102455,
+   "forecast": 33592384081.439457,
+   "realized": 33430619031.398113,
+   "cases": 8903
+  },
+  "test": {
+   "wape": 0.5038783531565129,
+   "nwape": 0.4480145693537974,
+   "bias": 0.24360313674622724,
+   "tradedCases": 422,
+   "profitableShare": 0.976303317535545,
+   "spearman": 0.945664878166141,
+   "top10": 0.42819273589734164,
+   "top10Error": 0.32803923347582215,
+   "forecast": 10099840954.66084,
+   "realized": 8121434126.554345,
+   "cases": 2978
+  }
+ },
+ "naive": {
+  "test": {
+   "wape": 1.5984708982192106,
+   "nwape": 1.147661289073519,
+   "bias": -31.517351092782096,
+   "tradedCases": 946,
+   "profitableShare": 0.7093023255813954,
+   "spearman": 0.4121996658110236,
+   "top10": -0.3177632565935117,
+   "top10Error": 2.201291076433994,
+   "forecast": 31045054577.432594,
+   "realized": -1017291916.4263673,
+   "cases": 2978
+  }
+ },
+ "price": {
+  "train": {
+   "model": 0.0852372002784645,
+   "naive": 0.0852372002784645
+  },
+  "test": {
+   "model": 0.08156364448646639,
+   "naive": 0.08156364448646639
+  },
+  "grid": [
+   {
+    "trend": "auto",
+    "phi": 0.7,
+    "train": {
+     "model": 0.08570926810280978,
+     "naive": 0.08560338801851627
+    }
+   },
+   {
+    "trend": "auto",
+    "phi": 0.8,
+    "train": {
+     "model": 0.08591106955399606,
+     "naive": 0.08560338801851627
+    }
+   },
+   {
+    "trend": "auto",
+    "phi": 0.9,
+    "train": {
+     "model": 0.08757304512975571,
+     "naive": 0.08560338801851627
+    }
+   },
+   {
+    "trend": "auto",
+    "phi": 0.95,
+    "train": {
+     "model": 0.0940722582152714,
+     "naive": 0.08560338801851627
+    }
+   },
+   {
+    "trend": "off",
+    "phi": 0.9,
+    "train": {
+     "model": 0.08560338801851627,
+     "naive": 0.08560338801851627
+    }
+   },
+   {
+    "trend": "on",
+    "phi": 0.7,
+    "train": {
+     "model": 0.08588985548384358,
+     "naive": 0.08560338801851627
+    }
+   },
+   {
+    "trend": "on",
+    "phi": 0.8,
+    "train": {
+     "model": 0.08642484043194819,
+     "naive": 0.08560338801851627
+    }
+   },
+   {
+    "trend": "on",
+    "phi": 0.9,
+    "train": {
+     "model": 0.08987228710332697,
+     "naive": 0.08560338801851627
+    }
+   },
+   {
+    "trend": "on",
+    "phi": 0.95,
+    "train": {
+     "model": 0.09956272408217161,
+     "naive": 0.08560338801851627
+    }
+   }
+  ]
+ },
+ "coverage": {
+  "before": {
+   "profit": 0.45,
+   "price": 0.7366666666666667,
+   "cases": 300,
+   "tradedCases": 300
+  },
+  "after": {
+   "profit": 0.8366666666666667,
+   "price": 0.7633333333333333,
+   "cases": 300,
+   "tradedCases": 300
+  },
+  "calibration": {
+   "price": [
+    {
+     "price_band": 0.75,
+     "coverage": 0.7
+    },
+    {
+     "price_band": 0.9,
+     "coverage": 0.755
+    },
+    {
+     "price_band": 1.0,
+     "coverage": 0.81
+    },
+    {
+     "price_band": 1.1,
+     "coverage": 0.855
+    },
+    {
+     "price_band": 1.25,
+     "coverage": 0.895
+    },
+    {
+     "price_band": 1.5,
+     "coverage": 0.925
+    }
+   ],
+   "margin": [
+    {
+     "band": 1.0,
+     "level": 0.0,
+     "coverage": 0.41
+    },
+    {
+     "band": 1.0,
+     "level": 0.25,
+     "coverage": 0.515
+    },
+    {
+     "band": 1.0,
+     "level": 0.5,
+     "coverage": 0.725
+    },
+    {
+     "band": 1.0,
+     "level": 0.75,
+     "coverage": 0.855
+    },
+    {
+     "band": 1.0,
+     "level": 1.0,
+     "coverage": 0.915
+    },
+    {
+     "band": 1.0,
+     "level": 1.5,
+     "coverage": 0.935
+    },
+    {
+     "band": 1.0,
+     "level": 2.0,
+     "coverage": 0.965
+    },
+    {
+     "band": 1.5,
+     "level": 0.0,
+     "coverage": 0.485
+    },
+    {
+     "band": 1.5,
+     "level": 0.25,
+     "coverage": 0.56
+    },
+    {
+     "band": 1.5,
+     "level": 0.5,
+     "coverage": 0.74
+    },
+    {
+     "band": 1.5,
+     "level": 0.75,
+     "coverage": 0.83
+    },
+    {
+     "band": 1.5,
+     "level": 1.0,
+     "coverage": 0.91
+    },
+    {
+     "band": 1.5,
+     "level": 1.5,
+     "coverage": 0.93
+    },
+    {
+     "band": 1.5,
+     "level": 2.0,
+     "coverage": 0.965
+    },
+    {
+     "band": 2.0,
+     "level": 0.0,
+     "coverage": 0.52
+    },
+    {
+     "band": 2.0,
+     "level": 0.25,
+     "coverage": 0.59
+    },
+    {
+     "band": 2.0,
+     "level": 0.5,
+     "coverage": 0.74
+    },
+    {
+     "band": 2.0,
+     "level": 0.75,
+     "coverage": 0.805
+    },
+    {
+     "band": 2.0,
+     "level": 1.0,
+     "coverage": 0.895
+    },
+    {
+     "band": 2.0,
+     "level": 1.5,
+     "coverage": 0.93
+    },
+    {
+     "band": 2.0,
+     "level": 2.0,
+     "coverage": 0.97
+    }
+   ]
+  }
+ },
+ "otherHorizons": {
+  "7": {
+   "before": {
+    "wape": 0.916282054981959,
+    "nwape": 0.7487319741879012,
+    "bias": 0.8969264983194907,
+    "tradedCases": 1016,
+    "profitableShare": 0.7844488188976378,
+    "spearman": 0.633379447700456,
+    "top10": 0.2597660207268809,
+    "top10Error": 0.8716599969908363,
+    "forecast": 4234889624.6384444,
+    "realized": 2232500641.63803,
+    "cases": 3289
+   },
+   "after": {
+    "wape": 0.6142301921880471,
+    "nwape": 0.5007606022385773,
+    "bias": 0.2210798739514368,
+    "tradedCases": 467,
+    "profitableShare": 0.9678800856531049,
+    "spearman": 0.9455666472189719,
+    "top10": 0.36532334491345264,
+    "top10Error": 0.28088182162905045,
+    "forecast": 2531113198.9955463,
+    "realized": 2072848183.8004732,
+    "cases": 3289
+   },
+   "price": {
+    "model": 0.039414399362591654,
+    "naive": 0.039414399362591654
+   }
+  },
+  "90": {
+   "before": {
+    "wape": 1.002044193572888,
+    "nwape": 0.7118744756828387,
+    "bias": 0.8878779626542632,
+    "tradedCases": 586,
+    "profitableShare": 0.7593856655290102,
+    "spearman": 0.5480703919368356,
+    "top10": 0.250139108909596,
+    "top10Error": 1.0081540322397722,
+    "forecast": 27114400467.756104,
+    "realized": 14362369286.643187,
+    "cases": 2075
+   },
+   "after": {
+    "wape": 0.4884087916437395,
+    "nwape": 0.5060006566408207,
+    "bias": -0.08938809051519336,
+    "tradedCases": 198,
+    "profitableShare": 0.9444444444444444,
+    "spearman": 0.886646700928566,
+    "top10": 0.4261698500114589,
+    "top10Error": 0.04823982935168196,
+    "forecast": 10677820004.8212,
+    "realized": 11725983257.634253,
+    "cases": 2075
+   },
+   "price": {
+    "model": 0.161042237805444,
+    "naive": 0.161042237805444
+   }
+  }
+ },
+ "seconds": 219.1,
+ "ranAt": 1790634219,
+ "share": 0.2,
+ "windows": 2.0,
+ "bundled": true
+}

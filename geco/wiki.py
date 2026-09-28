@@ -70,6 +70,10 @@ class WikiClient:
         q = f"?timestamp={int(timestamp)}" if timestamp else ""
         return self._get(f"{PRICES}/1h{q}")
 
+    def one_day(self, timestamp):
+        """Daily averages and volumes for every item, for the day starting at `timestamp`."""
+        return self._get(f"{PRICES}/24h?timestamp={int(timestamp)}")
+
     def timeseries(self, item_id, lookback):
         if lookback not in VALID_LOOKBACKS:
             raise ApiError("bad lookback")

@@ -60,6 +60,40 @@ ITEMS = [
     (12934, "Zulrah's scales", 142, 30000, 0, True, 900000),
     (6737, "Berserker ring", 3830000, 8, 60000, True, 56),
     (6733, "Archers ring", 2245000, 8, 60000, True, 18),
+    (227, "Vial of water", 5, 13000, 1, False, 200373),
+    (99, "Ranarr potion (unf)", 6334, 10000, 15, True, 18967),
+    (231, "Snape grass", 1170, 13000, 6, True, 77372),
+    (2998, "Toadflax", 2268, 13000, 28, True, 16087),
+    (3049, "Grimy toadflax", 2130, 13000, 11, True, 10514),
+    (3002, "Toadflax potion (unf)", 2536, 10000, 28, True, 40349),
+    (6693, "Crushed nest", 4072, 11000, 120, True, 19427),
+    (4716, "Dharok's helm", 354613, 15, 61800, True, 12),
+    (4720, "Dharok's platebody", 917000, 15, 168000, True, 9),
+    (4722, "Dharok's platelegs", 895653, 15, 165000, True, 10),
+    (4718, "Dharok's greataxe", 1799613, 15, 124800, True, 17),
+    (12877, "Dharok's armour set", 4033642, 8, 240000, True, 56),
+    (66, "Yew longbow (u)", 171, 10000, 384, True, 44762),
+    (855, "Yew longbow", 543, 18000, 768, True, 31188),
+    (1777, "Bow string", 199, 13000, 6, True, 67627),
+    (536, "Dragon bones", 3699, 7500, 96, True, 99201),
+    (1619, "Uncut ruby", 1012, 10000, 60, False, 58681),
+    (1603, "Ruby", 710, 13000, 600, False, 119278),
+    (383, "Raw shark", 689, 15000, 102, True, 81892),
+    (6332, "Mahogany logs", 127, 11000, 30, True, 271965),
+    (8782, "Mahogany plank", 2139, 13000, 900, True, 122841),
+    (573, "Air orb", 1397, 11000, 180, True, 71975),
+    (449, "Adamantite ore", 543, 4500, 240, False, 149858),
+    (2361, "Adamantite bar", 1944, 10000, 384, False, 82311),
+    (451, "Runite ore", 10172, 4500, 1920, False, 21211),
+    (563, "Law rune", 122, 18000, 144, False, 253578),
+    (562, "Chaos rune", 105, 18000, 54, False, 2494204),
+    (1521, "Oak logs", 39, 15000, 12, False, 22696),
+    (8778, "Oak plank", 531, 13000, 150, True, 125734),
+    (1617, "Uncut diamond", 2452, 10000, 120, False, 61667),
+    (1601, "Diamond", 1557, 11000, 1200, False, 64168),
+    (22124, "Superior dragon bones", 19338, 7500, 96, True, 8054),
+    (13439, "Raw anglerfish", 1326, 15000, 270, True, 97918),
+    (13441, "Anglerfish", 1513, 10000, 270, True, 64053),
 ]
 
 
@@ -71,12 +105,15 @@ def _price(item, t):
     iid, _, base = item[0], item[1], item[2]
     hours = t / 3600.0
     drift = 0.04 * math.sin(hours / 30 + iid) + 0.02 * math.sin(hours / 5 + iid * 0.3)
+    # A daily and weekly rhythm so the best time to trade view has a pattern to find.
+    drift += 0.012 * math.sin(2 * math.pi * (hours % 24) / 24 + iid % 7)
+    drift += 0.006 * math.sin(2 * math.pi * t / (7 * 86400) + iid % 5)
     jitter = 0.006 * _noise((iid, int(t // 300)))
     # A couple of demo items get a sharp move so the movers and spike flags have something to show.
     if iid in (1515, 6737):
         drift += 0.12 * max(0.0, 1 - abs((time.time() - t) / 3600.0) / 3)
     mid = base * (1 + drift + jitter)
-    spread = max(1, int(mid * (0.012 + 0.01 * abs(_noise((iid, "s", int(t // 3600)))))))
+    spread = max(1, int(mid * (0.018 + 0.014 * abs(_noise((iid, "s", int(t // 3600)))))))
     return int(mid + spread / 2), int(mid - spread / 2)
 
 
@@ -133,6 +170,9 @@ class DemoClient:
         ts = timestamp or (int(time.time()) // 3600 * 3600 - 3600)
         return self._window(ts, 3600)
 
+    def one_day(self, timestamp):
+        return self._window(int(timestamp), 86400)
+
     def timeseries(self, item_id, lookback):
         step = {"6h": 300, "24h": 300, "7d": 3600, "30d": 21600, "6m": 86400, "1y": 86400}[lookback]
         span = {"6h": 6, "24h": 24, "7d": 168, "30d": 720, "6m": 4380, "1y": 8760}[lookback] * 3600
@@ -167,7 +207,14 @@ class DemoClient:
                            "level": lvl, "xp": xp})
         skills.insert(0, {"id": 0, "name": "Overall", "rank": 123456, "level": total_lvl,
                           "xp": total_xp})
-        acts = [{"id": 0, "name": "Clue Scrolls (all)", "rank": 50000, "score": 312},
-                {"id": 1, "name": "Zulrah", "rank": 40000, "score": rng.randint(50, 900)},
-                {"id": 2, "name": "Vorkath", "rank": 30000, "score": rng.randint(50, 900)}]
+        # Kill counts creep up over time so KC gains have something to show.
+        kc_grow = time.time() / 3600.0
+        acts = []
+        for i, (n, lo, hi, rate) in enumerate([("Clue Scrolls (all)", 100, 400, 0.02),
+                                               ("Zulrah", 50, 900, 0.9), ("Vorkath", 50, 900, 0.7),
+                                               ("General Graardor", 20, 400, 0.3),
+                                               ("Chambers of Xeric", 5, 120, 0.05)]):
+            base = rng.randint(lo, hi)
+            acts.append({"id": i, "name": n, "rank": rng.randint(5_000, 90_000),
+                         "score": int(base + (kc_grow % 5000) * rate * rng.uniform(0.5, 1.0))})
         return {"name": player, "skills": skills, "activities": acts}

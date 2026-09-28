@@ -14,8 +14,10 @@ never sends input to the game. It only reads public websites, the same way your 
 2. Double-click `start.bat`. The dashboard opens at http://127.0.0.1:8765
 3. Leave the black window open while you use it. Close it (or press Ctrl+C) to stop.
 
-The first run downloads the item list and the last 24 hours of hourly prices (about 25 small
-requests, spaced out). Volumes and movers fill in within a minute or so.
+The first run downloads the item list, the last 24 hours of hourly prices and the last 6 hours
+of 5 minute prices (about 100 small bulk requests, one a second, so under two minutes).
+Volumes fill in within a minute; everything is ready once the backfill finishes. After that
+only missing windows are fetched.
 
 Want to look around offline? Run `start.bat --demo` for synthetic prices.
 
@@ -23,15 +25,20 @@ Want to look around offline? Run `start.bat --demo` for synthetic prices.
 
 | Tab | What it does |
 | --- | --- |
-| Flip finder | Every item ranked by profit after the 2% GE tax, ROI, volume, buy limit and an estimated 4 hour profit. Presets for high volume, big ticket, steady margins, under 100k. Stale prices flagged. |
+| Flip finder | Every item ranked by profit after the 2% GE tax, with a realistic fill estimate, hours to fill a limit, margin stability, a stability-adjusted 4 hour profit, and the buy limit you have left. Margin traps (prices that traded far apart, or margins recent history says don't hold) are flagged and hidden by default. Presets, plus a slot planner that fills your GE slots for a given cash stack. |
+| Market | Price indices (start = 100) for the whole market and for runes, logs, ores, herbs, potions, seeds, bones, food, ammo, gems, hides and big ticket items, each charted against the market. Advancers and decliners, the typical move, and the biggest markets by gp traded. |
 | Movers | Biggest gainers and losers over 1h, 6h, 24h, 7d, plus unusual volume spikes with pump and dump flags. |
-| Watchlist | Starred items with 24h sparklines and live margins. |
-| Alerts | Price below or above, flip profit, ROI, 1h move, volume spike. Pop-ups and a sound in the dashboard. |
-| Flip log | Log real buys and sells, see realized profit after tax, open position value, win rate, profit by day, best items, CSV export. |
+| Watchlist | Starred items with 24h sparklines, live margins and stability. |
+| Alerts | Price, profit, ROI, 1h move, rise, drop, volume, stability, spike and dump. Combine conditions with AND, point an alert at every watchlist item at once, and get desktop notifications when the tab is in the background. Buy limit resets are announced too. |
+| Flip log | Real buys and sells with profit after tax, an equity curve, worst drawdown, profit by day, hour and weekday, hold times, your buy and sell edge vs the market, buy limits in use, and CSV export. |
+| Portfolio | Holdings and cash stack valued live, unrealized profit, 24h change, allocation, open flips, and an hourly net worth chart. Paste a list like `2 x Abyssal whip` to import. |
+| Money making | About 140 processing and skilling methods priced live and ranked by GP per hour (herblore, crafting, fletching, smithing, cooking, construction and more), with buy limit caps, GP per XP, your own rates, and your own custom recipes. Item set arbitrage for about 100 sets, both combining and splitting. |
 | High alch | Profit per cast after the nature rune, GP per XP, profit per buy limit. |
 | Decanting | Cheapest dose per potion to buy and decant to 4-dose at Bob Barter, with profit per limit. |
-| Account | Hiscores lookup (regular, iron, hardcore, ultimate), XP gains over time, bosses and clues, goals with pace, ETA and live supply cost. |
-| Item panel | Click any item: instant buy and sell, tax, ROI, buy pressure, charts from 6 hours to 1 year, your own saved 5 minute history, links to the Wiki. |
+| Forecast | Expected flip profit per item over the next 7, 30 or 90 days, from demand (instant-buy and instant-sell volume), today's margin fading toward its usual level, and a price trend that is only used when it beat "no change" on recent days. A simulation of the item's own past good and bad days gives a likely range and the chance of a loss, plus what holding one limit would return instead. |
+| Backtest | Replay a rule (buy the dip, buy dumps, margin flips, breakouts) over your saved hourly history: trades, win rate, returns, drawdown, equity curve, return histogram, best items, and a comparison with just holding. |
+| Account | Hiscores lookup (regular, iron, hardcore, ultimate), XP and kill count gains over time, goals with pace, ETA and the cheapest ways to get there at live prices, a drop log with loot value per boss, and dry streak odds for the items you are chasing. |
+| Item panel | Click any item: prices, tax, ROI, stability, fill time, your buy limit, break-even sell price, charts from 6 hours to 1 year, the best hour and weekday to buy and sell, items that move with it, and recipes and sets it belongs to. |
 
 ## Good to know
 
@@ -41,9 +48,18 @@ Want to look around offline? Run `start.bat --demo` for synthetic prices.
 * **GE tax.** 2%, rounded down, capped at 5m per item, nothing under 50 gp, and the Wiki's
   exempt list (bonds, some food, teleports, tools). Edit `data/config.json` if Jagex changes it.
 * **Your own history.** The app saves every 5 minute window (kept 7 days) and every hourly
-  window (kept 1 year) while it runs. That's the data paid trackers usually charge for.
-  The 5 minute history levels off around 100 MB; hourly history adds roughly 2 MB a day.
-  Change how long each is kept in Settings.
+  window (kept 1 year) while it runs. That's the data paid trackers usually charge for, and
+  it feeds stability, timing, indices, correlations and backtests. The 5 minute history levels
+  off around 100 MB; hourly history adds roughly 2 MB a day. Change how long each is kept in
+  Settings, or raise History backfill (up to 30 days) for longer analytics from day one.
+* **Fills are shared.** Other flippers compete for the same trades, so estimates assume you
+  win a share (20% by default, in Settings) of the volume you buy from and sell into.
+* **Market history import.** On first start the app also imports a year of daily prices and
+  volumes for every item (365 bulk requests, one a second, in the background). The forecast
+  uses it, and the Forecast tab can backtest and re-tune itself on it. Change the number of
+  days in Settings, or set it to 0 to skip.
+* **Backups.** A copy of the database is saved to `data/backups` once a day (the last 7 are
+  kept). Settings has Back up now and a JSON export of everything you entered.
 * **Estimates, not guarantees.** Prices come from trades seen by RuneLite users. Price check
   in game before big flips.
 * **Be polite to the Wiki.** In Settings you can add your Discord name to the User-Agent so
@@ -52,10 +68,11 @@ Want to look around offline? Run `start.bat --demo` for synthetic prices.
 ## Files
 
 * `run.py` starts everything. `geco/` is the engine (Python standard library only).
-* `web/` is the dashboard. `data/` holds your settings, database and cached item list.
-  Back up `data/ge_companion.sqlite3` to keep your flip log, alerts and history.
+* `web/` is the dashboard. `data/` holds your settings, database, backups and cached item list.
+  Back up `data/ge_companion.sqlite3` to keep your flip log, portfolio, alerts and history.
+* `tests/` has the unit tests: `python -m unittest discover -s tests`.
 
 ## Next up
 
-Money making methods ranked by live GP/hr, a boss drop tracker with dry streaks,
-and item set arbitrage.
+Guide price tracking, a clue scroll reward value table, and custom item categories for the
+market indices.

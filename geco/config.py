@@ -19,6 +19,19 @@ DEFAULTS = {
     "keep_1h_days": 365,
     "stale_minutes": 20,
     "alert_cooldown_minutes": 30,
+    # Share of an item's instant-sell / instant-buy volume you can expect to win as a
+    # flipper. Other flippers compete for the same trades, so 100% is never realistic.
+    "fill_share": 0.2,
+    # A margin whose two prices traded this far apart in time is flagged as a possible trap.
+    "trap_gap_minutes": 15,
+    # How many hours of 5 minute history the margin stability score looks at.
+    "stability_hours": 6,
+    "notify_limit_reset": True,
+    # Days of daily market history to import from the Wiki's bulk /24h endpoint (one request
+    # per day of history, once). Feeds the forecast and its backtest. 0 turns it off.
+    "history_import_days": 365,
+    # Daily copy of the database in data/backups, keeping this many (0 turns it off).
+    "auto_backup_days": 7,
     # GE convenience fee (tax). Current rules: 2%, rounded down, 5m cap per item,
     # items under 50 gp pay nothing. Exempt items are matched by exact name.
     "tax_rate": 0.02,
