@@ -12,7 +12,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from geco import analytics, categories, config, features, market, recipes  # noqa: E402
+from geco import analytics, categories, config, features, forecast, market, recipes  # noqa: E402
 from geco.db import DB, wprice  # noqa: E402
 
 MAPPING = {
@@ -344,6 +344,74 @@ class FlipAndBossTests(TempDB):
         self.assertEqual(parsed[2]["qty"], 10000)
         self.assertEqual(parsed[3]["qty"], 1)
         self.assertEqual(bad, ["Foo 3"])
+
+
+class ForecastTests(TempDB):
+    def _store(self, days, price_fn, hv=240, lv=240):
+        now = time.time()
+        start = int(now // 86400 * 86400 - days * 86400)
+        for ts in range(start, start + days * 86400, 3600):
+            p = price_fn((ts - start) / 86400.0)
+            self.db.store_window("h1", ts, {"1": {"avgHighPrice": p * 1.05, "highPriceVolume": hv // 24,
+                                                  "avgLowPrice": p, "lowPriceVolume": lv // 24}})
+        return now
+
+    def test_daily_series_and_margin(self):
+        self._store(5, lambda d: 1000)
+        days = forecast.daily_series(self.db.history("h1", 1, 0), tax(), 1)
+        self.assertEqual(len(days), 5)
+        self.assertAlmostEqual(days[0]["roi"], (1050 - 21 - 1000) / 1000)
+        self.assertEqual(days[0]["held"], 1.0)
+
+    def test_trend_detected_and_checked(self):
+        now = self._store(30, lambda d: 1000 * (1.01 ** d))
+        row = {"high": 1400, "low": 1340, "roi": 0.02}
+        f = forecast.item_forecast(self.db, 1, row, MAPPING, tax(), horizon=10, share=0.5, windows=2, now=now)
+        self.assertTrue(f["ok"])
+        self.assertTrue(f["summary"]["useTrend"])
+        # Rising about 1% a day; the damped trend projects less than a straight line (10.5%).
+        self.assertGreater(f["summary"]["priceChange"], 0.03)
+        self.assertLess(f["summary"]["priceChange"], 0.105)
+        self.assertLess(f["summary"]["check"]["model"], f["summary"]["check"]["naive"])
+
+    def test_flat_market_profit_matches_demand_and_margin(self):
+        now = self._store(20, lambda d: 1000 + 5 * math.sin(d * 7))
+        row = {"high": 1050, "low": 1000, "roi": 0.029}
+        f = forecast.item_forecast(self.db, 1, row, MAPPING, tax(), horizon=10, share=0.5, windows=2, now=now)
+        s = f["summary"]
+        self.assertEqual(s["dailyQty"], 120)        # min(limit 100 x 2 windows, 50% of 240 a side)
+        # Margin stays about 2.95% after tax on the live mid price (1025), 120 a day for 10 days.
+        self.assertAlmostEqual(s["profit"], 0.0295 * 1025 * 120 * 10, delta=500)
+        self.assertLessEqual(s["p10"], s["p50"])
+        self.assertLessEqual(s["p50"], s["p90"])
+
+    def test_live_margin_fades(self):
+        m = {"histRoi": 0.01, "liveRoi": 0.05}
+        self.assertAlmostEqual(forecast._roi_on_day(m, 0), 0.05)
+        self.assertAlmostEqual(forecast._roi_on_day(m, 1), 0.03)
+        self.assertAlmostEqual(forecast._roi_on_day(m, 10), 0.01, places=3)
+
+    def test_trap_live_margin_ignored_and_no_chasing(self):
+        now = self._store(10, lambda d: 1000, hv=240, lv=240)
+        # History has a steady positive margin; a trapped live row must not change the forecast.
+        clean = forecast.item_forecast(self.db, 1, {"high": 1050, "low": 1000, "roi": 0.03}, MAPPING, tax(),
+                                       horizon=5, now=now)
+        trap = forecast.item_forecast(self.db, 1, {"high": 1050, "low": 1000, "roi": 0.5, "trap": True},
+                                      MAPPING, tax(), horizon=5, now=now)
+        self.assertLess(trap["summary"]["profit"], clean["summary"]["profit"] * 1.2)
+        # A negative usual margin: the simulated trader does not keep flipping into losses.
+        self.db.conn.execute("DELETE FROM h1")
+        now = self._store(10, lambda d: 1000 - 0.1 * d)
+        self.db.conn.execute("UPDATE h1 SET ah = al + 5")
+        f = forecast.item_forecast(self.db, 1, {"high": 1005, "low": 1000, "roi": -0.015}, MAPPING, tax(),
+                                   horizon=10, now=now)
+        self.assertEqual(f["summary"]["p50"], 0)
+        self.assertEqual(f["summary"]["lossChance"], 0)
+
+    def test_needs_history(self):
+        now = self._store(2, lambda d: 1000)
+        f = forecast.item_forecast(self.db, 1, None, MAPPING, tax(), now=now)
+        self.assertFalse(f["ok"])
 
 
 class CategoryTests(unittest.TestCase):

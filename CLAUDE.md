@@ -30,6 +30,9 @@ A free alternative to GE Tracker premium, built only on public, read-only data.
   Recipe item names must match the Wiki mapping exactly.
 * `geco/analytics.py`: seasonality, category indices, correlation, backtester. Reads only saved
   history, never the Wiki. `geco/categories.py`: name rules for index categories.
+* `geco/forecast.py`: long term profit forecast. Daily series from `h1`, damped trend (Holt)
+  on log price kept only if it beats a flat forecast on held out days, smoothed per side
+  volume, live ROI fading to the historical ROI, Monte Carlo bands from resampled past days.
 * `geco/server.py`: JSON API plus static files, bound to 127.0.0.1.
 * `web/`: vanilla JS dashboard (`app.js`), no build step. Charts are hand-rolled SVG
   (`priceChart`, `lineChart`, `barChart`, `heatmap`), colors are CSS tokens in `style.css`.
@@ -55,6 +58,7 @@ instantly so every analytics view has data.
 v2: everything in v1 plus a realistic fill model, margin stability and trap flags, buy limit
 tracking, slot planner, market indices, portfolio and net worth, money making by GP/hr, item set
 arbitrage, backtester, seasonality heatmap, correlations, composite and watchlist alerts, desktop
-notifications, KC gains, drop log with dry streaks, flip analytics, backups and export.
+notifications, KC gains, drop log with dry streaks, flip analytics, backups and export,
+and a Forecast tab (expected profit with likely range over 7/30/90 days).
 Hiscores response format verified against the live endpoint (Sep 2026).
 Next: guide price tracking, clue reward values, custom index categories.

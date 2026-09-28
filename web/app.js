@@ -250,13 +250,15 @@ function barChart(host, items, labelKey, valueKey, opts = {}) {
 }
 
 // Line chart over time for one to three series on one shared axis (indices, equity,
-// net worth). series: [{name, cls: "l1" | "l2" | "l3", color, pts: [{t, v}]}].
+// net worth, forecasts). series: [{name, cls: "l1" | "l2" | "l3", color, pts: [{t, v}],
+// dash, band: [{t, lo, hi}]}]. A band is drawn as a shaded range behind its line.
 // With two or more series there is a legend and each line is labelled at its end.
 function lineChart(host, series, opts = {}) {
   series = series.filter((s) => s.pts && s.pts.length >= 2);
   const W = Math.max(320, host.clientWidth || 600), H = opts.height || 230, multi = series.length > 1;
-  const padL = 62, padR = multi ? 96 : 14, padT = 10, padB = 22;
-  const all = series.flatMap((s) => s.pts);
+  const endLabels = multi && !opts.noEndLabels;
+  const padL = 62, padR = endLabels ? 96 : 14, padT = 10, padB = 22;
+  const all = series.flatMap((s) => s.pts.concat((s.band || []).flatMap((b) => [{ t: b.t, v: b.lo }, { t: b.t, v: b.hi }])));
   if (!all.length) { host.innerHTML = `<div class="empty">${esc(opts.empty || "No data yet.")}</div>`; return; }
   const fmt = opts.fmt || short;
   const t0 = Math.min(...all.map((p) => p.t)), t1 = Math.max(...all.map((p) => p.t));
@@ -278,8 +280,9 @@ function lineChart(host, series, opts = {}) {
     <svg class="chart" viewBox="0 0 ${W} ${H}" height="${H}" role="img" aria-label="${esc(opts.aria || "Line chart")}">
     ${ticks.map((t) => `<line class="grid" x1="${padL}" x2="${W - padR}" y1="${y(t)}" y2="${y(t)}"/><text x="${padL - 8}" y="${y(t) + 4}" text-anchor="end">${fmt(t)}</text>`).join("")}
     ${opts.base != null ? `<line class="base" x1="${padL}" x2="${W - padR}" y1="${y(opts.base)}" y2="${y(opts.base)}"/>` : ""}
-    ${series.map((s) => `<path class="${s.cls}" d="${path(s.pts)}"/>`).join("")}
-    ${multi ? ends.map((e) => `<text class="endlbl" x="${W - padR + 6}" y="${e.yy + 4}">${esc(e.s.name.length > 13 ? e.s.name.slice(0, 12) + "." : e.s.name)}</text>`).join("") : ""}
+    ${series.map((s) => s.band && s.band.length > 1 ? `<path d="${s.band.map((b, i) => (i ? "L" : "M") + x(b.t).toFixed(1) + "," + y(b.hi).toFixed(1)).join("")}${s.band.slice().reverse().map((b) => "L" + x(b.t).toFixed(1) + "," + y(b.lo).toFixed(1)).join("")}Z" style="fill:${s.color};opacity:.16"/>` : "").join("")}
+    ${series.map((s) => `<path class="${s.cls}" d="${path(s.pts)}"${s.dash ? ` stroke-dasharray="6 4"` : ""}/>`).join("")}
+    ${endLabels ? ends.map((e) => `<text class="endlbl" x="${W - padR + 6}" y="${e.yy + 4}">${esc(e.s.name.length > 13 ? e.s.name.slice(0, 12) + "." : e.s.name)}</text>`).join("") : ""}
     ${xt.map((t, i) => `<text x="${x(t)}" y="${H - 4}" text-anchor="${i === 0 ? "start" : i === nx ? "end" : "middle"}">${axisTime(t, span)}</text>`).join("")}
     <g class="hover" visibility="hidden"><line class="xhair" y1="${padT}" y2="${H - padB}"/>${series.map((s, i) => `<circle r="4" data-s="${i}" style="fill:${s.color};stroke:var(--surface);stroke-width:2"/>`).join("")}</g>
     <rect x="${padL}" y="${padT}" width="${W - padL - padR}" height="${H - padT - padB}" fill="transparent" class="hit"/>
@@ -290,11 +293,21 @@ function lineChart(host, series, opts = {}) {
     const rect = svg.getBoundingClientRect();
     const t = t0 + ((((e.clientX - rect.left) / rect.width) * W - padL) / (W - padL - padR)) * (t1 - t0);
     const near = series.map((s) => nearest(s.pts, t));
-    const px = x(near[0].t);
+    // Only series that actually have a point near the cursor (history vs forecast ranges differ).
+    const gapOf = (s) => (s.pts[s.pts.length - 1].t - s.pts[0].t) / Math.max(1, s.pts.length - 1);
+    const live = series.map((s, i) => Math.abs(near[i].t - t) <= gapOf(s) * 0.75);
+    if (!live.some(Boolean)) { let bi = 0; near.forEach((p, i) => { if (Math.abs(p.t - t) < Math.abs(near[bi].t - t)) bi = i; }); live[bi] = true; }
+    const first = near[live.indexOf(true)];
+    const px = x(first.t);
     g.setAttribute("visibility", "visible");
     $(".xhair", g).setAttribute("x1", px); $(".xhair", g).setAttribute("x2", px);
-    $$("circle", g).forEach((c) => { const p = near[+c.dataset.s]; c.setAttribute("cx", x(p.t)); c.setAttribute("cy", y(p.v)); });
-    tip.innerHTML = `<div class="muted">${esc(fmtTime(near[0].t, true))}</div>` + series.map((s, i) => `<div class="r"><span>${multi ? `<i style="background:${s.color}"></i>` : ""}${esc(s.name)}</span><b>${(opts.tipFmt || fmt)(near[i].v)}</b></div>`).join("");
+    $$("circle", g).forEach((c) => { const i = +c.dataset.s, p = near[i]; c.style.display = live[i] ? "" : "none"; c.setAttribute("cx", x(p.t)); c.setAttribute("cy", y(p.v)); });
+    const tf = opts.tipFmt || fmt;
+    tip.innerHTML = `<div class="muted">${esc(fmtTime(first.t, true))}</div>` + series.map((s, i) => {
+      if (!live[i]) return "";
+      const b = s.band && s.band.find((q) => q.t === near[i].t);
+      return `<div class="r"><span>${multi ? `<i style="background:${s.color}"></i>` : ""}${esc(s.name)}</span><b>${tf(near[i].v)}</b></div>` + (b ? `<div class="r"><span class="muted">Likely range</span><span>${tf(b.lo)} to ${tf(b.hi)}</span></div>` : "");
+    }).join("");
     tip.hidden = false;
     tip.style.left = Math.min(window.innerWidth - 220, e.clientX + 14) + "px"; tip.style.top = (e.clientY + 14) + "px";
   });
@@ -1085,6 +1098,101 @@ function drawMoney(host) {
   bindRowClicks($("#mmSets", host));
 }
 
+// Forecast -----------------------------------------------------------------------
+const FC = Object.assign({ days: 30, windows: "2", share: "", minVol: "5000", q: "", sel: null }, store.get("fc", {}));
+const FCS = { key: "profit", dir: "desc" };
+let FC_DATA = null;
+function confTag(c) {
+  const t = { high: "High", medium: "Medium", low: "Low" }[c] || c;
+  return `<span class="tag ${c === "low" ? "stale" : c === "high" ? "free" : ""}" title="Based on how many days of history exist and how well the model predicted recent days it had not seen">${t}</span>`;
+}
+function fcQuery(extra = "") {
+  const share = numOr(FC.share, (S.fillShare || 0.2) * 100);
+  return `days=${FC.days}&windows=${numOr(FC.windows, 2)}&share=${share}${extra}`;
+}
+renderers.forecast = async function (host) {
+  host.innerHTML = `<h2>Forecast</h2>
+    <p class="lede">Estimates what flipping each item would earn over the coming days, from its demand (instant-buy and instant-sell volume), today's margin fading toward its usual margin, and a price trend fitted to your saved history. The range comes from replaying the item's own past good and bad days. Long horizons carry more risk, so read the range, not just the middle.</p>
+    <div class="filters">
+      <div class="field"><span>Horizon</span><div class="seg" id="fcDays" style="margin-left:0">${[7, 30, 90].map((d) => `<button data-d="${d}" class="${FC.days === d ? "on" : ""}">${d} days</button>`).join("")}</div></div>
+      <label class="field" title="How many 4 hour buy limit windows you use per day"><span>Limit windows / day</span><input class="input" id="fcWin" value="${esc(FC.windows)}"></label>
+      <label class="field" title="Share of the volume you expect to win; defaults to your Settings value"><span>Fill share %</span><input class="input" id="fcShare" value="${esc(FC.share)}" placeholder="${Math.round((S.fillShare || 0.2) * 100)}"></label>
+      <label class="field"><span>Min 24h volume</span><input class="input" id="fcVol" value="${esc(FC.minVol)}"></label>
+      <label class="field wide"><span>Filter by name</span><input class="input" id="fcQ" value="${esc(FC.q)}"></label>
+    </div>
+    <div id="fcDetail"></div>
+    <div id="fcInfo" class="muted small" style="margin-bottom:6px"></div>
+    <div class="table-wrap" id="fcTable"><div class="empty">Building forecasts...</div></div>`;
+  $$("#fcDays button", host).forEach((b) => (b.onclick = () => { FC.days = +b.dataset.d; store.set("fc", FC); renderers.forecast(host); }));
+  const reload = () => { store.set("fc", FC); loadForecastRank(host); if (FC.sel) loadForecastDetail(host, FC.sel); };
+  $("#fcWin", host).onchange = (e) => { FC.windows = e.target.value; reload(); };
+  $("#fcShare", host).onchange = (e) => { FC.share = e.target.value; reload(); };
+  $("#fcVol", host).onchange = (e) => { FC.minVol = e.target.value; store.set("fc", FC); loadForecastRank(host); };
+  $("#fcQ", host).oninput = (e) => { FC.q = e.target.value; store.set("fc", FC); drawForecastRank(host); };
+  loadForecastRank(host);
+  if (FC.sel) loadForecastDetail(host, FC.sel);
+};
+async function loadForecastRank(host) {
+  try { FC_DATA = await api(`/api/forecast/rank?${fcQuery(`&minVol=${numOr(FC.minVol, 0)}`)}`); }
+  catch (e) { $("#fcTable", host).innerHTML = `<div class="notice">${esc(e.message)}</div>`; return; }
+  drawForecastRank(host);
+}
+function drawForecastRank(host) {
+  if (!FC_DATA) return;
+  const q = FC.q.trim().toLowerCase();
+  let rows = FC_DATA.items.filter((r) => !q || r.name.toLowerCase().includes(q));
+  rows = sortRows(rows, FCS.key, FCS.dir).slice(0, 150);
+  $("#fcInfo", host).innerHTML = FC_DATA.maxDays < 7 ? `Only ${FC_DATA.maxDays} days of hourly history saved so far, so confidence is low. Raise <b>History backfill</b> in Settings (up to 30 days) for better forecasts.` : `${FC_DATA.items.length} items forecast over ${FC_DATA.horizon} days. Click a row for the full forecast.`;
+  $("#fcTable", host).innerHTML = rows.length ? `<table>${thead([{ label: "" }, { label: "Item", sort: "name" }, { label: "Confidence", sort: "days" }, { label: "Margin now", sort: "roiNow", num: 1, title: "Live ROI after tax" }, { label: "Usual margin", sort: "roiHist", num: 1, title: "Recent daily average ROI after tax" }, { label: "Qty / day", sort: "dailyQty", num: 1 }, { label: "Capital", sort: "capital", num: 1, title: "Cash tied up by one day's buying" }, { label: "Per day", sort: "perDay", num: 1 }, { label: `Next ${FC_DATA.horizon} days`, sort: "profit", num: 1, title: "Expected profit; the range covers 8 in 10 outcomes" }, { label: "Likely range", num: 1 }, { label: "Price trend", sort: "priceChange", num: 1 }], FCS)}<tbody>${rows.map((r) => `
+    <tr data-fc="${r.id}"><td>${star(r.id)}</td><td>${itemCell(r)}</td><td>${confTag(r.confidence)} <span class="muted small">${r.days}d</span></td>
+    <td class="num ${signCls(r.roiNow)}">${pct(r.roiNow, 2)}</td><td class="num ${signCls(r.roiHist)}">${pct(r.roiHist, 2)}</td>
+    <td class="num">${short(r.dailyQty)}</td><td class="num">${short(r.capital)}</td><td class="num">${short(r.perDay)}</td>
+    <td class="num pos"><b>${short(r.profit)}</b></td><td class="num small muted">${short(r.low)} to ${short(r.high)}</td>
+    <td class="num ${signCls(r.priceChange)}">${r.trend ? (r.priceChange > 0 ? "+" : "") + pct(r.priceChange, 1) : `<span class="muted" title="A trend did not beat 'no change' on recent days, so none is assumed">flat</span>`}</td></tr>`).join("")}</tbody></table>`
+    : `<div class="empty">No items to forecast yet. Forecasts need at least 3 days of saved hourly history.</div>`;
+  bindSort($("#fcTable", host), FCS, () => drawForecastRank(host));
+  $$("tr[data-fc]", host).forEach((tr) => tr.addEventListener("click", (e) => { if (e.target.closest("button")) return; FC.sel = +tr.dataset.fc; store.set("fc", FC); loadForecastDetail(host, FC.sel); window.scrollTo({ top: 0, behavior: "smooth" }); }));
+  $$("#fcTable .star", host).forEach((b) => b.addEventListener("click", async (e) => { e.stopPropagation(); await toggleWatch(+b.dataset.id); }));
+}
+async function loadForecastDetail(host, id) {
+  const box = $("#fcDetail", host);
+  box.innerHTML = `<div class="card" style="margin-bottom:14px"><div class="empty">Simulating...</div></div>`;
+  let f;
+  try { f = await api(`/api/forecast?id=${id}&${fcQuery()}`); } catch (e) { box.innerHTML = `<div class="notice">${esc(e.message)}</div>`; return; }
+  const r = S.byId.get(id) || { name: "Item " + id };
+  if (!f.ok) { box.innerHTML = `<div class="notice">${esc(r.name)}: ${esc(f.reason)}</div>`; return; }
+  const s = f.summary, h = f.hold, chk = s.check;
+  const modelNote = chk ? `On the last ${chk.days} days it had not seen, the trend model was off by ${pct(chk.model, 1)} on average vs ${pct(chk.naive, 1)} for assuming no change, so ${s.useTrend ? "the trend is used" : "no trend is assumed"}.` : "Too little history to test the price model yet, so no trend is assumed.";
+  box.innerHTML = `<div class="card" style="margin-bottom:14px">
+    <div class="section-head" style="margin-top:0">${itemCell(r)} ${confTag(f.confidence)}<span class="muted small">${f.daysOfHistory} days of history</span>
+      <div class="right"><button class="btn small" id="fcOpen">Item details</button><button class="btn small ghost" id="fcClose">Close</button></div></div>
+    <div class="tiles">
+      <div class="tile"><div class="k">Expected, ${f.horizon} days</div><div class="v ${signCls(s.p50)}">${signed(s.p50, short)}</div><div class="s">About ${short(s.p50 / f.horizon)} a day (middle outcome)</div></div>
+      <div class="tile"><div class="k">Likely range</div><div class="v" style="font-size:15px">${short(s.p10)} to ${short(s.p90)}</div><div class="s">8 in 10 simulated outcomes</div></div>
+      <div class="tile"><div class="k">Chance of a loss</div><div class="v ${s.lossChance > 0.2 ? "neg" : ""}">${pct(s.lossChance, 0)}</div><div class="s">Over the whole horizon</div></div>
+      <div class="tile"><div class="k">Margin</div><div class="v" style="font-size:15px">${pct(s.roiNow, 2)} now</div><div class="s">${pct(s.roiHist, 2)} usual · held ${s.held == null ? "-" : pct(s.held, 0)} of hours</div></div>
+      <div class="tile"><div class="k">Demand</div><div class="v">${short(s.dailyQty)}<span class="small muted"> / day</span></div><div class="s">${s.limitCapped ? "Capped by the buy limit" : `Your share of ${short(s.demandPerDay)} traded`}</div></div>
+      <div class="tile"><div class="k">Price in ${f.horizon} days</div><div class="v ${signCls(s.priceChange)}">${s.useTrend ? (s.priceChange > 0 ? "+" : "") + pct(s.priceChange, 1) : "Flat"}</div><div class="s">${short(s.priceP10)} to ${short(s.priceP90)} likely</div></div>
+    </div>
+    <div class="grid2">
+      <div class="chart-card"><div class="chart-head"><span class="title">Price</span><span class="muted small">Daily average, forecast with likely range</span></div><div id="fcPrice"></div></div>
+      <div class="chart-card"><div class="chart-head"><span class="title">Cumulative flip profit</span><span class="muted small">Middle outcome with likely range</span></div><div id="fcProfit"></div></div>
+    </div>
+    ${h ? `<div class="callout"><b>Holding instead:</b> buying one limit (${gp(h.qty)} for ${short(h.cost)}) now and selling in ${f.horizon} days would likely return <b class="${signCls(h.p50)}">${signed(h.p50, short)}</b> (${short(h.p10)} to ${short(h.p90)}), after tax.</div>` : ""}
+    <p class="small muted" style="margin:6px 0 0">${esc(modelNote)} Assumes ${pct(f.assumptions.share, 0)} of volume and ${f.assumptions.windows} limit window(s) a day, and that you skip days after a losing margin. Game updates and bot bans can move prices in ways no history predicts.</p>
+  </div>`;
+  const now = Math.floor(Date.now() / 1000);
+  lineChart($("#fcPrice", box), [
+    { name: "History", cls: "l1", color: "var(--series-1)", pts: f.history.map((d) => ({ t: d.t, v: d.price })) },
+    { name: "Forecast", cls: "l2", color: "var(--series-2)", dash: true, pts: [{ t: now, v: s.priceNow }].concat(f.bands.map((b) => ({ t: b.t, v: b.p50 }))), band: [{ t: now, lo: s.priceNow, hi: s.priceNow }].concat(f.bands.map((b) => ({ t: b.t, lo: b.p10, hi: b.p90 }))) },
+  ], { height: 220, noEndLabels: true, aria: "Price history and forecast", tipFmt: (v) => gp(v) });
+  lineChart($("#fcProfit", box), [
+    { name: "Profit", cls: "l1", color: "var(--series-1)", pts: [{ t: now, v: 0 }].concat(f.bands.map((b) => ({ t: b.t, v: b.c50 }))), band: [{ t: now, lo: 0, hi: 0 }].concat(f.bands.map((b) => ({ t: b.t, lo: b.c10, hi: b.c90 }))) },
+  ], { height: 220, zero: true, aria: "Cumulative forecast profit", tipFmt: (v) => signed(v, short) + " gp" });
+  $("#fcOpen", box).onclick = () => openItem(id);
+  $("#fcClose", box).onclick = () => { FC.sel = null; store.set("fc", FC); box.innerHTML = ""; };
+}
+
 // Backtest -----------------------------------------------------------------------
 const BT = Object.assign({ strategy: "dip", days: "30", threshold: "5", hold: "6", lookback: "24", volMult: "3", minPrice: "1000", maxPrice: "", minVol: "5000", members: "all", watchOnly: false, share: "20" }, store.get("bt", {}));
 renderers.backtest = async function (host) {
@@ -1446,6 +1554,7 @@ async function openItem(id) {
         <div class="seg" id="drSeason">${[14, 30, 90].map((dd) => `<button data-d="${dd}" class="${DR.season === dd ? "on" : ""}">${dd}d</button>`).join("")}</div></div>
       <div id="drHeat"><div class="empty">Loading...</div></div><div id="drHeatNote" class="small" style="margin-top:6px"></div>
     </div>
+    <div class="card" style="margin-bottom:14px"><div class="section-head" style="margin-top:0"><h3>30 day forecast</h3><div class="right"><button class="btn small" id="drFc">Full forecast</button></div></div><div id="drFcBody" class="small"><div class="muted">Loading...</div></div></div>
     <div class="grid2">
       <div class="card"><h3 style="margin-top:0">Moves with</h3><div id="drCorr" class="small"><div class="muted">Loading...</div></div></div>
       <div class="card"><h3 style="margin-top:0">Recipes and sets</h3><div id="drRec" class="small"><div class="muted">Loading...</div></div></div>
@@ -1498,9 +1607,20 @@ async function openItem(id) {
   };
   $("#drBe").addEventListener("input", (e) => { const b = numOr(e.target.value, NaN); $("#drBeOut").textContent = Number.isFinite(b) ? gp(breakeven(b, r)) : "-"; });
   $$("#drSeason button").forEach((b) => (b.onclick = () => { DR.season = +b.dataset.d; store.set("season", DR.season); $$("#drSeason button").forEach((x) => x.classList.toggle("on", x === b)); loadSeason(id); }));
+  $("#drFc").onclick = () => { FC.sel = id; FC.days = 30; store.set("fc", FC); closeItem(); showTab("forecast"); };
   loadChart(id);
   loadSeason(id);
+  loadDrawerForecast(id);
   loadRelated(id, r);
+}
+async function loadDrawerForecast(id) {
+  let f;
+  try { f = await api(`/api/forecast?id=${id}&days=30&windows=2&share=${Math.round((S.fillShare || 0.2) * 100)}`); } catch (e) { f = { ok: false, reason: e.message }; }
+  const box = $("#drFcBody");
+  if (!box || S.openId !== id) return;
+  if (!f.ok) { box.innerHTML = `<span class="muted">${esc(f.reason)}</span>`; return; }
+  const s = f.summary;
+  box.innerHTML = `Flipping this for 30 days (2 limit windows a day) would likely earn <b class="${signCls(s.p50)}">${signed(s.p50, short)}</b>, with 8 in 10 outcomes between <b>${short(s.p10)}</b> and <b>${short(s.p90)}</b> and a ${pct(s.lossChance, 0)} chance of a loss. Price ${s.useTrend ? `trend: <b class="${signCls(s.priceChange)}">${s.priceChange > 0 ? "+" : ""}${pct(s.priceChange, 1)}</b>` : "is assumed flat"}. ${confTag(f.confidence)}`;
 }
 async function loadSeason(id) {
   const host = $("#drHeat");

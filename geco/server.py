@@ -6,7 +6,7 @@ import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import analytics, config, features, market, recipes
+from . import analytics, config, features, forecast, market, recipes
 from .wiki import ApiError
 
 
@@ -205,6 +205,21 @@ def make_handler(app):
                 _, by_id = self._market_rows()
                 return self._send(200, analytics.cached(("corr", iid, days), 600,
                                                         lambda: analytics.correlated(D, E.mapping, by_id, iid, days)))
+            if path in ("/api/forecast", "/api/forecast/rank"):
+                horizon = max(1, min(180, int(q.get("days", 30))))
+                share = float(q.get("share") or app.cfg.get("fill_share", 0.2))
+                share = max(0.01, min(1.0, share / 100 if share > 1 else share))
+                windows = max(0.25, min(6.0, float(q.get("windows", 2))))
+                _, by_id = self._market_rows()
+                if path == "/api/forecast":
+                    iid = int(q["id"])
+                    return self._send(200, analytics.cached(
+                        ("fc", iid, horizon, share, windows), 300,
+                        lambda: forecast.item_forecast(D, iid, by_id.get(iid), E.mapping, E.tax, horizon, share, windows)))
+                min_vol = float(q.get("minVol", 1000))
+                return self._send(200, analytics.cached(
+                    ("fcr", horizon, share, windows, min_vol), 600,
+                    lambda: forecast.rank(D, E.mapping, by_id, E.tax, horizon, share, windows, min_vol)))
             if path == "/api/backtest/strategies":
                 return self._send(200, {"strategies": analytics.STRATEGIES,
                                         "hoursOfData": D.snapshot_count("h1")})
