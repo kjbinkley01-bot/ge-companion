@@ -5,7 +5,7 @@ import os
 import threading
 import time
 
-from . import analytics, features, forecast, forecast_eval, market, recipes
+from . import analytics, features, forecast, forecast_eval, hold, market, recipes
 from .config import DATA_DIR
 
 log = logging.getLogger("geco")
@@ -30,11 +30,12 @@ class Engine:
         self._limit_check = time.time()
         self.status = {"started": int(time.time()), "last_latest": None, "last_5m": None,
                        "last_1h": None, "backfill": "pending", "errors": [],
-                       "import": "idle", "tune": "idle"}
+                       "import": "idle", "tune": "idle", "holdTrain": "idle"}
         self._stop = threading.Event()
         self._import_lock = threading.Lock()
         self.forecast_params = forecast.load_params(DATA_DIR)
         self.params_version = 0
+        self.hold_model = hold.load(DATA_DIR)
 
     # Status helpers -------------------------------------------------------------
     def _err(self, where, e):
@@ -229,6 +230,33 @@ class Engine:
                 with self.lock:
                     self.status["tune"] = f"failed: {e}"
         threading.Thread(target=job, daemon=True, name="tune").start()
+        return True
+
+    def train_hold(self):
+        """Retrain the holding outlook on your imported history (walk-forward tested first)."""
+        with self.lock:
+            if self.status["holdTrain"].startswith("running"):
+                return False
+            self.status["holdTrain"] = "running: starting"
+
+        def say(msg):
+            with self.lock:
+                self.status["holdTrain"] = "running: " + msg
+
+        def job():
+            try:
+                bundle = hold.train(self.db, self.tax, progress=say)
+                hold.save(bundle, DATA_DIR)
+                with self.lock:
+                    self.hold_model = hold.load(DATA_DIR)
+                    self.params_version += 1
+                    self.status["holdTrain"] = "done"
+                analytics.clear_cache()
+            except Exception as e:
+                self._err("holding model", e)
+                with self.lock:
+                    self.status["holdTrain"] = f"failed: {e}"
+        threading.Thread(target=job, daemon=True, name="hold-train").start()
         return True
 
     def rebuild(self):

@@ -29,7 +29,7 @@ DEFAULTS = {
     "notify_limit_reset": True,
     # Days of daily market history to import from the Wiki's bulk /24h endpoint (one request
     # per day of history, once). Feeds the forecast and its backtest. 0 turns it off.
-    "history_import_days": 365,
+    "history_import_days": 730,
     # Daily copy of the database in data/backups, keeping this many (0 turns it off).
     "auto_backup_days": 7,
     # GE convenience fee (tax). Current rules: 2%, rounded down, 5m cap per item,
@@ -62,6 +62,11 @@ def load():
                 cfg.update(json.load(f))
         except (OSError, ValueError):
             pass
+    # v3: the holding outlook needs two years of daily history; lift the old 365 default.
+    if cfg.get("config_version", 1) < 3:
+        if cfg.get("history_import_days") == 365:
+            cfg["history_import_days"] = 730
+        cfg["config_version"] = 3
     save(cfg)  # writes any new default keys back to the file
     return cfg
 

@@ -1,5 +1,6 @@
 """Local HTTP server: JSON API plus the dashboard files. Binds to 127.0.0.1 only."""
 import json
+import math
 import mimetypes
 import os
 import threading
@@ -7,7 +8,7 @@ import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import analytics, config, features, forecast, forecast_eval, market, recipes
+from . import analytics, config, features, forecast, forecast_eval, hold, market, recipes
 from .wiki import ApiError
 
 
@@ -225,6 +226,67 @@ def make_handler(app):
                 return self._send(200, analytics.cached(
                     ("fcr", horizon, share, windows, min_vol, ver), 600,
                     lambda: forecast.rank(D, E.mapping, by_id, E.tax, horizon, share, windows, min_vol, params=P)))
+            if path in ("/api/hold", "/api/hold/scan", "/api/hold/model"):
+                bundle, ver = E.hold_model, E.params_version
+                if path == "/api/hold/model":
+                    with E.lock:
+                        st = E.status["holdTrain"]
+                    return self._send(200, {"report": bundle["report"] if bundle else None,
+                                            "source": bundle["source"] if bundle else None, "status": st,
+                                            "dailyDays": D.snapshot_count("d1")})
+                if not bundle:
+                    return self._send(200, {"ok": False, "reason": "No holding model yet."})
+                _, by_id = self._market_rows()
+                universe = analytics.cached(("hold-universe", ver), 900, lambda: _hold_universe(D, E.tax))
+                if path == "/api/hold":
+                    iid = int(q["id"])
+                    qty = max(1, int(float(q.get("qty") or 1)))
+
+                    def one():
+                        g = universe["grids"].get(iid) or hold.load_grids(D, E.tax, time.time(), ids=[iid]).get(iid)
+                        if not g:
+                            return {"id": iid, "ok": False,
+                                    "reason": "Needs about 180 days of daily history for this item. Import a year of history in Settings."}
+                        row = by_id.get(iid) or {}
+                        o = hold.outlook(bundle, g, universe["market30"], row.get("high") or row.get("low"), qty,
+                                         E.tax, iid)
+                        return dict(o, id=iid, ok=True) if o else {"id": iid, "ok": False, "reason": "Not enough history."}
+                    return self._send(200, analytics.cached(("hold", iid, qty, ver), 300, one))
+                scope = q.get("scope", "market")
+
+                def scan():
+                    if scope == "portfolio":
+                        ids = [h["item_id"] for h in D.q("SELECT item_id FROM holdings")]
+                    elif scope == "watch":
+                        ids = [r["id"] for r in D.q("SELECT id FROM watchlist")]
+                    else:
+                        ids = list(universe["grids"])
+                    out = []
+                    for iid in dict.fromkeys(ids):
+                        g = universe["grids"].get(iid)
+                        if g is None and scope != "market":
+                            g = hold.load_grids(D, E.tax, time.time(), ids=[iid]).get(iid)
+                        row = by_id.get(iid) or {}
+                        o = hold.outlook(bundle, g, universe["market30"], row.get("high") or row.get("low"), 1,
+                                         E.tax, iid) if g else None
+                        m = E.mapping.get(iid, {})
+                        item = {"id": iid, "name": m.get("name", f"Item {iid}"), "icon": m.get("icon"),
+                                "members": m.get("members"), "vol24": row.get("vol24")}
+                        if not o:
+                            out.append(dict(item, ok=False))
+                            continue
+                        pts = {p["h"]: p for p in o["points"]}
+                        out.append(dict(item, ok=True, verdict=o["verdict"], price=o["priceNow"],
+                                        ret7=pts.get(7, {}).get("ret"), ret30=pts.get(30, {}).get("ret"),
+                                        ret90=pts.get(90, {}).get("ret"), lo30=pts.get(30, {}).get("lo"),
+                                        hi30=pts.get(30, {}).get("hi"), pUp30=pts.get(30, {}).get("pUp"),
+                                        pUp90=pts.get(90, {}).get("pUp"), chg30=o["facts"]["chg30"],
+                                        chg90=o["facts"]["chg90"], monthlyMove=o["facts"]["monthlyMove"],
+                                        reason=o["reasons"][0]["signal"] if o["reasons"] else None,
+                                        own90up=(o["facts"].get("own90") or {}).get("up"),
+                                        own90med=(o["facts"].get("own90") or {}).get("median")))
+                    return {"scope": scope, "items": out, "market30": math.exp(universe["market30"]) - 1}
+                return self._send(200, analytics.cached(("hold-scan", scope, ver), 300, scan))
             if path == "/api/forecast/report":
                 with E.lock:
                     st = {"tune": E.status["tune"], "import": E.status["import"]}
@@ -239,7 +301,8 @@ def make_handler(app):
                 patient = q.get("patient", "1") != "0"
                 pricer = E.pricer()
                 return self._send(200, {
-                    "methods": recipes.money_making(pricer, D, patient),
+                    "methods": recipes.money_making(pricer, D, patient,
+                                                    smithing=int(q["smithing"]) if q.get("smithing") else None),
                     "sets": recipes.set_arbitrage(pricer, pricer.stats, patient),
                     "custom": D.q("SELECT * FROM recipes_custom ORDER BY rid"),
                 })
@@ -401,6 +464,8 @@ def make_handler(app):
                              float(b.get("xp") or 0), float(b.get("per_hour") or 0), json.dumps(ins),
                              json.dumps(outs), float(b.get("coins") or 0), now))
                 return self._send(200, {"rid": rid})
+            if path == "/api/hold/train":
+                return self._send(200, {"started": E.train_hold()})
             if path == "/api/forecast/tune":
                 started = E.tune_forecast(max(7, min(90, int(b.get("horizon") or 30))))
                 return self._send(200, {"started": started})
@@ -461,6 +526,15 @@ def make_handler(app):
             return self._send(200, {"ok": True})
 
     return Handler
+
+
+def _hold_universe(db, tax):
+    """Daily grids for the most traded items and today's market direction (cached)."""
+    now = time.time()
+    grids = hold.load_grids(db, tax, now)
+    mkt = hold.market_series(grids)
+    today = max(mkt) if mkt else None
+    return {"grids": grids, "market30": mkt.get(today, 0.0) if today else 0.0}
 
 
 def serve(app, port):

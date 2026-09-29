@@ -12,7 +12,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from geco import analytics, categories, config, features, forecast, forecast_eval, market, recipes  # noqa: E402
+from geco import analytics, categories, config, features, forecast, forecast_eval, hold, market, recipes  # noqa: E402
 from geco.db import DB, wprice  # noqa: E402
 
 MAPPING = {
@@ -483,6 +483,56 @@ class ForecastEvalTests(TempDB):
         for k, v in forecast.DEFAULT_PARAMS.items():
             if k in rep["params"] and k != "phi":
                 self.assertEqual(rep["params"][k], v, k)
+
+
+class HoldTests(unittest.TestCase):
+    def test_solver(self):
+        x = hold._solve([[2.0, 1.0], [1.0, 3.0]], [5.0, 10.0])
+        self.assertAlmostEqual(x[0], 1.0)
+        self.assertAlmostEqual(x[1], 3.0)
+
+    def test_features(self):
+        prices = [100.0 * (1.001 ** k) for k in range(200)]
+        vols = [1000.0] * 200
+        f = hold._feature_row(prices, vols, 199, 0.01)
+        self.assertAlmostEqual(f["r30"], 30 * math.log(1.001), places=9)
+        self.assertGreater(f["ma30"], 0)             # a rising price sits above its average
+        self.assertAlmostEqual(f["range180"], 1.0)   # at its high
+        self.assertAlmostEqual(f["vol30"], 0.0, places=9)
+        self.assertIsNone(hold._feature_row(prices, vols, 100))
+
+    def test_learns_momentum_without_peeking(self):
+        # Synthetic market: items whose last 30 days rose keep rising a little, others drift down.
+        import random as _r
+        rng = _r.Random(1)
+        grids = {}
+        for iid in range(60):
+            p, prices, vols = 1000.0, [], []
+            drift = 0.0
+            for k in range(600):
+                if k % 30 == 0:
+                    drift = rng.choice([-0.002, 0.002])
+                p *= math.exp(drift + rng.gauss(0, 0.01))
+                prices.append(p)
+                vols.append(1000.0)
+            grids[iid] = (0, prices, vols)
+        rows = hold.dataset(grids, hold.market_series(grids), step=5)
+        split = sorted({r["t"] for r in rows})[int(len({r["t"] for r in rows}) * 0.6)]
+        tr = [r for r in rows if r["t"] + 7 * 86400 < split]
+        te = [r for r in rows if r["t"] >= split]
+        m = hold.fit(tr, 7)
+        res = hold.evaluate({7: m}, te)["7"]
+        self.assertGreater(res["corr"], 0.1)
+        self.assertGreater(res["topFifth"], res["bottomFifth"])
+        # prob_up is a probability and rises with the prediction.
+        x = te[0]["x"]
+        self.assertLess(hold.prob_up(m, x, -0.05), hold.prob_up(m, x, 0.05))
+
+    def test_verdict_rules(self):
+        self.assertEqual(hold.verdict(0.05, 0.7), "hold")
+        self.assertEqual(hold.verdict(-0.05, 0.3), "sell")
+        self.assertEqual(hold.verdict(0.05, 0.5), "neutral")
+        self.assertEqual(hold.verdict(0.01, 0.9), "neutral")
 
 
 class CategoryTests(unittest.TestCase):
