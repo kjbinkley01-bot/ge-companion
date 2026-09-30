@@ -44,7 +44,7 @@ A free alternative to GE Tracker premium, built only on public, read-only data.
   horizon (7/30/90 days), walk-forward tested; a horizon's signal is only used if it beat
   "no change" on held out months, otherwise the outlook centers on no change with odds and
   ranges from real moves. Ships `geco/hold_model.json` (two years, Sep 2026: no signal passed).
-* `runelite-plugin/`: RuneLite plugin (Java 11, Gradle, `run-plugin.bat` or `gradlew run`
+* `runelite-plugin/`: RuneLite plugin (targets Java 11, builds with Gradle 9.1 on Java 17 to 25, `run-plugin.bat` or `gradlew run`
   sideloads it). Writes JSON lines to `~/.runelite/bankstanding/events-YYYY-MM.jsonl`:
   `{v, t (ms), type, acct (rsprofile key), name, ...}` with types login, logout, offer (slot,
   state, item, price, total, done, spent: cumulative), container (bank, inventory, equipment,

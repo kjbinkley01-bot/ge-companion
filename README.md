@@ -34,7 +34,7 @@ and XP. With it running, the Net worth tab shows your whole account valued live,
 trade lands in the flip log on its own. Nothing is sent anywhere: the plugin writes to
 `.runelite/bankstanding` in your user folder and this app reads it.
 
-1. Install Java 11 or newer (Adoptium Temurin is free).
+1. Install Java 17 or newer (Adoptium Temurin is free; Java 25 works).
 2. Double-click `runelite-plugin/run-plugin.bat` (or run `gradlew run` in that folder). The
    first run downloads RuneLite's libraries, then opens RuneLite with the plugin loaded.
    If you log in with a Jagex account, follow RuneLite's guide for using a Jagex account with
