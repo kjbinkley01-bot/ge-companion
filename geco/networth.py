@@ -32,6 +32,9 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS account_worth (
     acct TEXT NOT NULL, ts INTEGER NOT NULL, total INTEGER, cash INTEGER, items INTEGER, ge INTEGER,
     PRIMARY KEY (acct, ts));
+CREATE TABLE IF NOT EXISTS cost_seed (
+    acct TEXT NOT NULL, item INTEGER NOT NULL, t INTEGER NOT NULL, qty INTEGER NOT NULL, each REAL NOT NULL,
+    PRIMARY KEY (acct, item, t));
 """
 
 
@@ -175,15 +178,62 @@ class Valuer:
 
 
 def _basis(db, acct, engine):
-    """Average cost of the units still held from real GE buys, per item (FIFO)."""
-    fills = db.q("SELECT * FROM ge_fills WHERE acct=?", (acct,))
+    """Average cost of the units still held, per item (first in, first out).
+
+    Units come from real GE buys, plus starting costs: items first seen with no known cost
+    get the market value on the day they were first seen (see seed_costs).
+    """
+    fills = list(db.q("SELECT * FROM ge_fills WHERE acct=?", (acct,)))
+    for sd in db.q("SELECT * FROM cost_seed WHERE acct=?", (acct,)):
+        fills.append({"fid": -1, "acct": acct, "item": sd["item"], "side": "buy", "qty": sd["qty"],
+                      "gp": sd["each"] * sd["qty"], "t": sd["t"], "offer_price": None, "seed": True})
     _, lots = account.match_flips(fills, engine.tax)
     out = {}
     for lot in lots:
-        b = out.setdefault(lot["item"], {"qty": 0, "cost": 0.0})
+        b = out.setdefault(lot["item"], {"qty": 0, "cost": 0.0, "seedQty": 0, "seedT": None})
         b["qty"] += lot["qty"]
         b["cost"] += lot["qty"] * lot["each"]
+        if lot.get("seed"):
+            b["seedQty"] += lot["qty"]
+            b["seedT"] = lot["t"]
     return out
+
+
+def seed_costs(db, engine, acct, containers, now=None):
+    """Give held items with no known cost a starting cost: today's value, once per item.
+
+    Only the units not already covered by GE buys are seeded, so profit or loss on older
+    items counts from the day tracking began. Returns how many items were seeded.
+    """
+    now = int(now or time.time())
+    valuer = Valuer(engine, "sell")
+    held = {}
+    for cname, bag in containers.items():
+        if cname == "manual":
+            continue
+        for iid, qty in bag.items():
+            _add(held, iid, qty)
+    basis = _basis(db, acct, engine)
+    # Each item is seeded once, except that the first sight of a storage (usually the bank,
+    # opened after the inventory was already seen) tops up what it adds.
+    key = "seeded_containers:" + acct
+    before = set(json.loads(db.kv_get(key, "[]") or "[]"))
+    now_seen = {c for c in containers if c != "manual" and containers[c]}
+    new_storage = bool(now_seen - before)
+    done = set() if new_storage else {r["item"] for r in db.q("SELECT item FROM cost_seed WHERE acct=?", (acct,))}
+    rows = []
+    for iid, qty in held.items():
+        if iid in (COINS, PLATINUM) or iid in done:
+            continue
+        uncovered = qty - basis.get(iid, {}).get("qty", 0)
+        each, _, how = valuer.each(iid)
+        if uncovered > 0 and how == "sell" and each > 0:
+            rows.append((acct, iid, now, uncovered, float(each)))
+    if rows:
+        db.many("INSERT OR IGNORE INTO cost_seed (acct, item, t, qty, each) VALUES (?,?,?,?,?)", rows)
+    if new_storage:
+        db.kv_set(key, json.dumps(sorted(before | now_seen)))
+    return len(rows)
 
 
 def account_view(db, engine, acct, cfg, include_manual=False):
@@ -230,7 +280,11 @@ def account_view(db, engine, acct, cfg, include_manual=False):
             avg = b["cost"] / b["qty"]
             row["costEach"] = avg
             row["basisQty"] = q
+            row["basisCost"] = avg * q
             row["pnl"] = (it["each"] - avg) * q
+            row["costFrom"] = ("first seen" if b["seedQty"] >= b["qty"] else
+                               "trades" if not b["seedQty"] else "mixed")
+            row["seededAt"] = b["seedT"]
         if it["how"] == "cash":
             cash += value
             row["category"] = "Cash"
@@ -267,6 +321,9 @@ def account_view(db, engine, acct, cfg, include_manual=False):
         "coverage": coverage, "geEstimated": estimated,
         "chg24market": sum(r["chg24gp"] for r in holdings),
         "pnl": sum(r.get("pnl") or 0 for r in holdings),
+        "costSince": min([r["seededAt"] for r in holdings if r.get("seededAt")] or [None]) if any(
+            r.get("seededAt") for r in holdings) else None,
+        "costCovered": sum(r["value"] for r in holdings if r.get("basisQty")),
         "mode": valuer.mode,
     }
 
@@ -289,6 +346,12 @@ def combined_view(db, engine, cfg):
             if h.get("pnl") is not None:
                 m["pnl"] = (m.get("pnl") or 0) + h["pnl"]
                 m["basisQty"] = (m.get("basisQty") or 0) + h["basisQty"]
+                m["basisCost"] = (m.get("basisCost") or 0) + h["basisCost"]
+                m["costEach"] = m["basisCost"] / m["basisQty"] if m["basisQty"] else None
+                if m.get("costFrom") != h["costFrom"]:
+                    m["costFrom"] = "mixed" if m.get("costFrom") else h["costFrom"]
+                m["seededAt"] = min(x for x in (m.get("seededAt"), h.get("seededAt")) if x) if (
+                    m.get("seededAt") or h.get("seededAt")) else None
             for k, q in h["where"].items():
                 m["where"][k] = m["where"].get(k, 0) + q
     holdings = sorted(merged.values(), key=lambda r: -r["value"])
@@ -317,6 +380,8 @@ def combined_view(db, engine, cfg):
                      for v in views for c in v["coverage"]],
         "geEstimated": any(v["geEstimated"] for v in parts),
         "chg24market": sum(v["chg24market"] for v in parts), "pnl": sum(v["pnl"] for v in parts),
+        "costSince": min([v["costSince"] for v in parts if v.get("costSince")] or [None]),
+        "costCovered": sum(v.get("costCovered") or 0 for v in parts),
         "mode": cfg.get("networth_value", "sell"), "accounts": len(views),
         "manualIncluded": bool(manual["holdings"]),
     }
@@ -330,6 +395,7 @@ def record(db, engine, cfg, now=None, bucket=300):
     ts = now // bucket * bucket
     rows = []
     for a in account.accounts(db):
+        seed_costs(db, engine, a["acct"], raw_holdings(db, a["acct"])[0], now)
         v = account_view(db, engine, a["acct"], cfg)
         if v["holdings"]:
             rows.append((a["acct"], ts, int(v["total"]), int(v["cash"]), int(v["items"]), int(v["ge"])))

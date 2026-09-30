@@ -54,7 +54,9 @@ A free alternative to GE Tracker premium, built only on public, read-only data.
   latest GE offers, reconstructs fills from cumulative offer changes, FIFO matches them into
   automatic flip log rows (`flips.source='auto'`, rebuilt each time; `flip_ignore` opts out).
 * `geco/networth.py`: account valuation (sell price after tax or mid), GE escrow (reserved
-  coins, listed items, collection boxes), cost basis from open lots, portfolio categories,
+  coins, listed items, collection boxes), cost basis from open lots plus starting costs
+  (`cost_seed`: items first seen with no cost get that day's value, topped up the first time a
+  new storage is seen), portfolio categories,
   history in `account_worth` (5 minute buckets, per account and `*` combined), backcast of
   today's holdings at past prices.
 * `geco/advice.py`: recommendations from what an account holds, each with a confidence label.

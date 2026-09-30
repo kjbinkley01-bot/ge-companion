@@ -43,6 +43,9 @@ Accuracy notes:
   each time you open it. The Net worth tab shows what the plugin has seen and when.
 * Offers that fill while you are logged out are caught up at your next login, timed at the
   login (marked "caught up").
+* Average cost and profit or loss: GE buys use what you actually paid. Items you already had
+  (or got from drops) are given their value on the day the plugin first saw them, marked *
+  in the holdings table, so their profit or loss counts from the day tracking began.
 * Untradeable items have no GE price, so they are listed but count as 0.
 * Storage the plugin cannot see (costume room, STASH units, other accounts without the plugin)
   can be added by hand on the Portfolio tab and included in the all accounts total.

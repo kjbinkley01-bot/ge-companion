@@ -241,7 +241,7 @@ def match_flips(fills, tax, ignore=frozenset()):
             continue
         if f["side"] == "buy":
             lots.setdefault(key, []).append({"qty": f["qty"], "each": f["gp"] / f["qty"] if f["qty"] else 0,
-                                             "t": f["t"], "fid": f["fid"]})
+                                             "t": f["t"], "fid": f["fid"], "seed": f.get("seed", False)})
             continue
         gross, t_, net = sell_split(f["gp"], f["qty"], f["offer_price"] or 0, tax, f["item"])
         need = f["qty"]

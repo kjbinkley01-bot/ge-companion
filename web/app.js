@@ -1074,7 +1074,7 @@ renderers.networth = async function (host, soft) {
   const scrollY = soft ? window.scrollY : null;
   const cols = [{ sort: "name", label: "Item" }, { sort: "qty", label: "Qty", num: 1 }, { sort: "each", label: "Price", num: 1, title: v.mode === "market" ? "Mid price" : "Instant-buy price after tax" },
     { sort: "value", label: "Value", num: 1 }, { sort: "share", label: "Share" }, { sort: "chg24h", label: "24h", num: 1 }, { sort: "chg24gp", label: "24h gp", num: 1 },
-    { sort: "costEach", label: "Avg cost", num: 1, title: "Average price paid for units bought on the GE while the plugin was running (first in, first out)" },
+    { sort: "costEach", label: "Avg cost", num: 1, title: "Average price paid for GE buys (first in, first out). Items you already had get their value on the day the plugin first saw them, marked *" },
     { sort: "pnl", label: "Unrealized", num: 1, title: "Value now minus what you paid, for units with a known cost" }, { sort: "category", label: "Class" }, { label: "Where" }];
   const rows = sortRows(holdings, NW.sort.key, NW.sort.dir);
   const where = (w) => Object.entries(w).map(([k, q]) => `${esc(({ bank: "Bank", inventory: "Inv", equipment: "Worn", ge: "GE", rune_pouch: "Pouch", looting_bag: "Bag", seed_vault: "Vault", death_storage: "Death", manual: "Manual" })[k] || k)}${Object.keys(w).length > 1 ? " " + short(q) : ""}`).join(", ");
@@ -1097,7 +1097,7 @@ renderers.networth = async function (host, soft) {
         <span class="k">Items</span><span>${short(v.items)}</span>
         <span class="k">In the GE</span><span>${short(v.ge)}${v.geEstimated ? ` <span class="tag stale" title="Some collection boxes were not seen since the last trade, so they are estimated from the offer">est</span>` : ""}</span>
         <span class="k" title="How much today's price moves changed your item value (Wiki 24h change)">Market move today</span><span class="${signCls(v.chg24market)}">${signed(v.chg24market, short)}</span>
-        <span class="k" title="Value now minus cost, for items bought on the GE while tracked">Unrealized P/L</span><span class="${signCls(v.pnl)}">${v.pnl ? signed(v.pnl, short) : "-"}</span>
+        <span class="k" title="Value now minus cost. GE buys use what you paid; items you already had use their value when the plugin first saw them">Unrealized P/L</span><span class="${signCls(v.pnl)}">${v.pnl ? signed(v.pnl, short) : "-"}${v.costSince ? ` <span class="muted small" title="Items you already had count from the day tracking began">since ${esc(new Date(v.costSince * 1000).toLocaleDateString([], { month: "short", day: "numeric" }))}</span>` : ""}</span>
       </div>
     </div>
     <div class="chart-card"><div class="chart-head"><span class="title">Portfolio value</span>
@@ -1111,14 +1111,14 @@ renderers.networth = async function (host, soft) {
     </div>
     <div class="section-head"><h3>Grand Exchange slots</h3><span class="muted small">Live from the plugin. Offers that fill while you are logged out update at your next login.</span></div>
     <div id="nwSlots"><div class="muted small">Loading...</div></div>
-    <div class="section-head"><h3>Holdings</h3><span class="muted small">${holdings.length} items. Click a row for charts and the holding outlook.</span></div>
+    <div class="section-head"><h3>Holdings</h3><span class="muted small">${holdings.length} items. Click a row for charts and the holding outlook. * Cost is the value when the plugin first saw the item, so profit or loss counts from then.</span></div>
     <div class="table-wrap">${holdings.length ? `<table>${thead(cols, NW.sort)}<tbody>${rows.slice(0, NW.show).map((h) => `
       <tr data-id="${h.id}"><td>${itemCell(h, h.how !== "sell" && h.how !== "cash" && h.how !== "market" ? ` <span class="tag stale" title="How this item was priced">${esc(h.how)}</span>` : "")}</td>
       <td class="num">${gp(h.qty)}</td><td class="num">${h.how === "cash" ? "-" : gp(h.each)}</td><td class="num"><b>${short(h.value)}</b></td>
       <td class="small"><span class="share" style="width:${Math.max(2, Math.round(h.share * 80))}px"></span>${pct(h.share, h.share < 0.01 ? 2 : 1)}</td>
       <td class="num ${signCls(h.chg24h)}">${h.chg24h == null || h.how === "cash" ? "-" : (h.chg24h > 0 ? "+" : "") + pct(h.chg24h)}</td>
       <td class="num ${signCls(h.chg24gp)}">${h.chg24gp ? signed(h.chg24gp, short) : "-"}</td>
-      <td class="num">${h.costEach == null ? "-" : gp(h.costEach)}</td>
+      <td class="num" ${h.costFrom && h.costFrom !== "trades" ? `title="${h.costFrom === "mixed" ? "Part GE buys, part " : ""}value when first seen${h.seededAt ? " on " + esc(fmtTime(h.seededAt, true)) : ""}: profit or loss counts from then"` : ""}>${h.costEach == null ? "-" : gp(h.costEach) + (h.costFrom && h.costFrom !== "trades" ? `<span class="muted">*</span>` : "")}</td>
       <td class="num ${signCls(h.pnl)}">${h.pnl == null ? "-" : signed(h.pnl, short)}</td>
       <td class="small muted">${esc(h.category || "")}</td><td class="small muted">${where(h.where)}</td></tr>`).join("")}
       ${rows.length > NW.show ? `<tr class="static"><td colspan="${cols.length}" class="more-row"><button class="btn small" id="nwMore">Show all ${rows.length}</button></td></tr>` : ""}</tbody></table>`

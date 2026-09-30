@@ -166,6 +166,48 @@ class NetWorthTests(Base):
         self.assertEqual(len(networth.history(self.db, ACCT)), 1)
         self.assertEqual(len(networth.history(self.db, None)), 1)
 
+    def test_starting_cost_for_items_already_held(self):
+        now = time.time()
+        cfg = {"networth_value": "sell"}
+        self.write([ev(now - 600, "container", container="bank", items=[[995, 5000], [SHARK, 100], [TBOW, 1]])])
+        account.ingest(self.db, self.folder)
+        eng = FakeEngine({TBOW: (1_000_000_000, 990_000_000), SHARK: (1000, 990)})
+        networth.record(self.db, eng, cfg)
+        v = networth.account_view(self.db, eng, ACCT, cfg)
+        shark = next(h for h in v["holdings"] if h["id"] == SHARK)
+        self.assertEqual((shark["costEach"], shark["pnl"], shark["costFrom"]), (980, 0, "first seen"))
+        self.assertIsNotNone(v["costSince"])
+        # Prices move: profit or loss counts from the starting cost.
+        eng2 = FakeEngine({TBOW: (1_100_000_000, 1_090_000_000), SHARK: (1100, 1090)})
+        v = networth.account_view(self.db, eng2, ACCT, cfg)
+        self.assertEqual(next(h for h in v["holdings"] if h["id"] == SHARK)["pnl"], 100 * (1078 - 980))
+        self.assertEqual(next(h for h in v["holdings"] if h["id"] == TBOW)["pnl"], 100_000_000)
+        # A later GE buy is added at what was paid, and the starting cost is not seeded again.
+        self.write([offer(now - 60, 0, "BUYING", SHARK, 900, 100, 0, 0),
+                    offer(now - 30, 0, "BOUGHT", SHARK, 900, 100, 100, 90000),
+                    ev(now - 20, "container", container="bank", items=[[995, 5000], [SHARK, 200], [TBOW, 1]]),
+                    ev(now - 20, "container", container="ge_collect_0", items=[])])
+        account.ingest(self.db, self.folder)
+        networth.record(self.db, eng2, cfg)
+        v = networth.account_view(self.db, eng2, ACCT, cfg)
+        shark = next(h for h in v["holdings"] if h["id"] == SHARK)
+        self.assertEqual(shark["costEach"], (980 * 100 + 900 * 100) / 200)
+        self.assertEqual(shark["costFrom"], "mixed")
+        self.assertEqual(len(self.db.q("SELECT * FROM cost_seed")), 2)
+        # More loot later is not given a new starting cost...
+        self.write([ev(now - 10, "container", container="bank", items=[[995, 5000], [SHARK, 250], [TBOW, 1]])])
+        account.ingest(self.db, self.folder)
+        networth.record(self.db, eng2, cfg)
+        self.assertEqual(len(self.db.q("SELECT * FROM cost_seed")), 2)
+        # ...but the first sight of another storage tops up what it adds.
+        self.write([ev(now - 5, "container", container="seed_vault", items=[[TBOW, 1]])])
+        account.ingest(self.db, self.folder)
+        networth.record(self.db, eng2, cfg, now=now + 1)
+        self.assertEqual(self.db.q("SELECT qty FROM cost_seed WHERE item=? ORDER BY t", (TBOW,))[-1]["qty"], 1)
+        self.assertEqual(len(self.db.q("SELECT * FROM cost_seed WHERE item=?", (SHARK,))), 2)
+        # Selling on the GE uses up the oldest units first, and no flip is made from a starting cost.
+        self.assertEqual(account.match_flips(self.db.q("SELECT * FROM ge_fills"), eng.tax)[0], [])
+
     def test_categories(self):
         self.assertEqual(networth.category("Bandos chestplate"), "Armour")
         self.assertEqual(networth.category("Dharok's greataxe"), "Weapons")
