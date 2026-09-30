@@ -105,15 +105,20 @@ A free alternative to GE Tracker premium, built only on public, read-only data.
   must not come from another Origin.
 * `geco/demo_feed.py`: writes plugin format events in demo mode (`data/demo-runelite`).
 * `geco/server.py`: JSON API plus static files, bound to 127.0.0.1.
-* `web/`: vanilla JS dashboard (`app.js`), no build step. Sectioned side menu (collapsible to
-  icons, a slide-in drawer on phones); the app opens on Net worth. Charts are hand-rolled SVG
+* `web/`: vanilla JS dashboard (`app.js`), no build step. Styled after Robinhood Legend using
+  colors measured from a Legend screenshot: blue black canvas, flat borderless panels with 8px
+  gutters, a navy header with page tabs (open, close, and a "+" menu of every page grouped by
+  section, like Legend's layouts), a centered live status pill, a global account switcher,
+  normal case type (Inter, bundled in `web/fonts`, OFL), text only timeframes, outlined pills,
+  neon lime for up and actions, coral red for down, and triangles (not signs) on changes via
+  `arrow()`, `signed()` and `sgnPct()`. The app opens on Net worth. Charts are hand-rolled SVG
   (`priceChart`, `lineChart`, `barChart`, `heatmap`, `tradingChart`, `treemap`), colors are
-  CSS tokens in `style.css`. The theme follows Robinhood Legend (black canvas, green brand,
-  orange-red down). Series colors were checked with the dataviz palette validator in both
-  themes; up and down always carry a second cue (sign, hollow vs filled candles).
-  The Terminal tab is a linked workspace: list, chart, quote/position and news panels all
-  follow `TM.id`, with keyboard shortcuts. Candles are approximate (built from window
-  averages: close = mid, open = previous close, wicks = avg instant buy and sell).
+  CSS tokens in `style.css`; categorical series colors pass the dataviz palette validator in
+  both themes, and up and down always carry a second cue (triangle, hollow vs filled candles).
+  The Terminal tab is a linked workspace (panels marked with Legend's link square): list,
+  chart, quote/position and news panels all follow `TM.id`, with keyboard shortcuts. Candles
+  are approximate (built from window averages: close = mid, open = previous close, wicks =
+  avg instant buy and sell).
 * `tests/`: `python -m unittest discover -s tests` (standard library only).
 * `data/`: runtime files (config, database, backups, cached mapping). Git ignored.
 
@@ -143,7 +148,7 @@ allocation, live GE slots, recommendations), automatic flip log from real trades
 v4: Terminal (linked workspace, candles, indicators, compare, price lines, news flags), News
 tab with an event study, performance vs a market index with return attribution, risk panel,
 holdings and market heatmaps, indicator report, Legend style theme.
-v5: renamed Bankstanding; side menu; Bank statement; offer coach; measured fill rates and per
+v5: renamed Bankstanding; Legend layout (page tabs, measured palette, Inter); Bank statement; offer coach; measured fill rates and per
 account limits; phone notifications and LAN mode; goals and income; edge report, strategy
 tags, paper trading; price targets and ladders; manipulation guard; guide prices; clue
 values; custom categories; RuneLite side panel.
