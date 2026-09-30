@@ -2,3 +2,5 @@ data/
 __pycache__/
 *.pyc
 *.sqlite3*
+runelite-plugin/build/
+runelite-plugin/.gradle/
