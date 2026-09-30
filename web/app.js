@@ -985,13 +985,21 @@ renderers.portfolio = async function (host) {
         <div id="pfImpMsg" class="small" style="margin-top:6px"></div></div>
     </div>
     <h3>Holdings</h3>
-    <div class="table-wrap">${p.holdings.length ? `<table>${thead([{ label: "Item" }, { label: "Qty", num: 1 }, { label: "Cost each", num: 1 }, { label: "Price", num: 1 }, { label: "Value", num: 1 }, { label: "P/L", num: 1 }, { label: "24h", num: 1 }, { label: "Share" }, { label: "" }], null)}<tbody>${p.holdings.sort((a, b) => (b.value || 0) - (a.value || 0)).map((h) => `
+    <div class="table-wrap">${p.holdings.length ? `<table>${thead([{ label: "Item" }, { label: "Qty", num: 1 }, { label: "Cost each", num: 1 }, { label: "Price", num: 1 }, { label: "Value", num: 1 }, { label: "P/L", num: 1 }, { label: "24h", num: 1 }, { label: "Outlook", title: "Do trends support holding? From the holding outlook model" }, { label: "Next 30d", num: 1, title: "Expected value change, middle outcome" }, { label: "Share" }, { label: "" }], null)}<tbody>${p.holdings.sort((a, b) => (b.value || 0) - (a.value || 0)).map((h) => `
       <tr data-id="${h.item_id}"><td>${itemCell(h)}</td><td class="num">${gp(h.qty)}</td><td class="num">${h.costEach == null ? "-" : gp(h.costEach)}</td><td class="num">${gp(h.price)}</td>
       <td class="num"><b>${short(h.value)}</b></td><td class="num ${signCls(h.pnl)}">${h.pnl == null ? "-" : signed(h.pnl, short)}</td>
       <td class="num ${signCls(h.chg24h)}">${h.chg24h == null ? "-" : (h.chg24h > 0 ? "+" : "") + pct(h.chg24h)}</td>
+      <td data-ho-v="${h.item_id}"><span class="muted small">...</span></td><td class="num" data-ho-r="${h.item_id}" data-val="${h.value || 0}"></td>
       <td class="small">${h.share == null ? "-" : `<span class="share" style="width:${Math.max(2, Math.round(h.share * 80))}px"></span>${pct(h.share, 0)}`}</td>
       <td class="num"><button class="btn small danger" data-hdel="${h.hid}">Delete</button></td></tr>`).join("")}</tbody></table>` : `<div class="empty">No holdings yet. Add some above or paste a list.</div>`}</div>
     ${p.openFlips.length ? `<h3>Open flips</h3><div class="table-wrap"><table>${thead([{ label: "Item" }, { label: "Qty", num: 1 }, { label: "Cost", num: 1 }, { label: "Value now", num: 1 }, { label: "P/L", num: 1 }], null)}<tbody>${p.openFlips.map((f) => `<tr data-id="${f.item_id}"><td>${itemCell(f)}</td><td class="num">${gp(f.qty)}</td><td class="num">${short(f.cost)}</td><td class="num">${short(f.value)}</td><td class="num ${signCls(f.pnl)}">${signed(f.pnl, short)}</td></tr>`).join("")}</tbody></table></div>` : ""}`;
+  if (p.holdings.length) {
+    api("/api/hold/scan?scope=portfolio").then((d) => {
+      const by = new Map((d.items || []).map((x) => [x.id, x]));
+      $$("[data-ho-v]", host).forEach((el) => { const x = by.get(+el.dataset.hoV); el.innerHTML = x && x.ok ? verdictTag(x.verdict) : `<span class="muted small" title="Needs about 180 days of daily history">-</span>`; });
+      $$("[data-ho-r]", host).forEach((el) => { const x = by.get(+el.dataset.hoR); if (x && x.ok) { el.className = "num " + signCls(x.ret30); el.innerHTML = `${signed(+el.dataset.val * x.ret30, short)} <span class="muted small">${sgnPct(x.ret30)}</span>`; } else el.textContent = "-"; });
+    }).catch(() => {});
+  }
   lineChart($("#pfChart", host), [{ name: "Net worth", cls: "l1", color: "var(--series-1)", pts: p.history.map((h) => ({ t: h.ts, v: h.total })) }], { empty: "Net worth is recorded every hour once you add holdings or cash. The chart appears after the second snapshot.", aria: "Net worth over time", height: 200, tipFmt: (v) => gp(v) + " gp" });
   let picked = null;
   makePicker($("#pfItem", host), $("#pfItemList", host), (r) => { picked = r; $("#pfItem", host).value = r.name; if (!$("#pfCost", host).value) $("#pfCost", host).placeholder = "Now " + short(r.low); });
@@ -1013,7 +1021,7 @@ renderers.portfolio = async function (host) {
 };
 
 // Money making: recipes and item sets ---------------------------------------------
-const MM = Object.assign({ patient: true, skill: "all", hideRisky: true, q: "", setDir: "all", rates: {} }, store.get("mm", {}));
+const MM = Object.assign({ patient: true, skill: "all", hideRisky: true, q: "", setDir: "all", rates: {}, smithing: "" }, store.get("mm", {}));
 let MM_DATA = null;
 renderers.money = async function (host) {
   host.innerHTML = `<h2>Money making</h2>
@@ -1021,6 +1029,7 @@ renderers.money = async function (host) {
     <div class="filters">
       <label class="field wide"><span>Search</span><input class="input" id="mmQ" value="${esc(MM.q)}" placeholder="e.g. potion, bar"></label>
       <label class="field"><span>Skill</span><select class="input" id="mmSkill"></select></label>
+      <label class="field" title="Barrows repair on your own armour stand costs less the higher your Smithing. Leave blank to repair at an NPC (full price)."><span>Smithing (armour stand)</span><input class="input" id="mmSmith" value="${esc(MM.smithing)}" placeholder="NPC price" inputmode="numeric"></label>
       <label class="check"><input type="checkbox" id="mmPat" ${MM.patient ? "checked" : ""}> Patient offers (buy at instant-sell, sell at instant-buy)</label>
       <label class="check"><input type="checkbox" id="mmRisky" ${MM.hideRisky ? "checked" : ""}> Hide stale and thin</label>
     </div>
@@ -1042,6 +1051,7 @@ renderers.money = async function (host) {
       <div id="crList" style="margin-top:10px"></div>
     </details>`;
   const bind = (id, key, ev = "input") => $(id, host).addEventListener(ev, (e) => { MM[key] = e.target.type === "checkbox" ? e.target.checked : e.target.value; store.set("mm", MM); if (key === "patient") loadMoney(host); else drawMoney(host); });
+  $("#mmSmith", host).addEventListener("change", (e) => { MM.smithing = e.target.value.trim(); store.set("mm", MM); loadMoney(host); });
   bind("#mmQ", "q"); bind("#mmSkill", "skill", "change"); bind("#mmPat", "patient", "change"); bind("#mmRisky", "hideRisky", "change");
   $$("#mmDir button", host).forEach((b) => (b.onclick = () => { MM.setDir = b.dataset.k; store.set("mm", MM); $$("#mmDir button", host).forEach((x) => x.classList.toggle("on", x === b)); drawMoney(host); }));
   const parseLegs = (txt) => txt.split(/\n/).map((l) => l.trim()).filter(Boolean).map((l) => { const m = l.match(/^([\d.]+)\s*x\s*(.+)$/i) || l.match(/^(.+?)\s*x\s*([\d.]+)$/i); if (!m) return [l, 1]; return /^[\d.]+$/.test(m[1]) ? [m[2], +m[1]] : [m[1], +m[2]]; });
@@ -1054,9 +1064,12 @@ renderers.money = async function (host) {
   loadMoney(host);
 };
 async function loadMoney(host) {
-  try { MM_DATA = await api("/api/recipes?patient=" + (MM.patient ? 1 : 0)); } catch (e) { $("#mmTable", host).innerHTML = `<div class="notice">${esc(e.message)}</div>`; return; }
+  const smith = numOr(MM.smithing, 0);
+  try { MM_DATA = await api("/api/recipes?patient=" + (MM.patient ? 1 : 0) + (smith >= 1 && smith <= 99 ? "&smithing=" + Math.round(smith) : "")); } catch (e) { $("#mmTable", host).innerHTML = `<div class="notice">${esc(e.message)}</div>`; return; }
   const skills = [...new Set(MM_DATA.methods.map((m) => m.skill))].sort();
-  $("#mmSkill", host).innerHTML = `<option value="all">All skills</option>` + skills.map((k) => `<option ${MM.skill === k ? "selected" : ""}>${esc(k)}</option>`).join("");
+  const groups = [...new Set(MM_DATA.methods.map((m) => m.group).filter((g) => g && !skills.includes(g)))].sort();
+  $("#mmSkill", host).innerHTML = `<option value="all">All skills</option>` + skills.map((k) => `<option ${MM.skill === k ? "selected" : ""}>${esc(k)}</option>`).join("")
+    + (groups.length ? `<optgroup label="Groups">${groups.map((g) => `<option value="group:${esc(g)}" ${MM.skill === "group:" + g ? "selected" : ""}>${esc(g)}</option>`).join("")}</optgroup>` : "");
   $("#crList", host).innerHTML = MM_DATA.custom.length ? `<div class="small">${MM_DATA.custom.map((c) => `<div style="display:flex;gap:8px;align-items:center;padding:3px 0"><b>${esc(c.name)}</b><span class="muted">${esc(c.skill || "")}</span><button class="btn small danger" data-rdel="${c.rid}" style="margin-left:auto">Delete</button></div>`).join("")}</div>` : "";
   $$("[data-rdel]", host).forEach((b) => (b.onclick = async () => { if (!confirmInline(b)) return; await api("/api/recipes/custom?rid=" + b.dataset.rdel, { method: "DELETE" }); loadMoney(host); }));
   drawMoney(host);
@@ -1065,17 +1078,17 @@ const MMS = { key: "gpHrLive", dir: "desc" }, MSS = { key: "profit", dir: "desc"
 function drawMoney(host) {
   if (!MM_DATA) return;
   const q = MM.q.trim().toLowerCase();
-  let rows = MM_DATA.methods.filter((m) => (MM.skill === "all" || m.skill === MM.skill) && (!q || m.name.toLowerCase().includes(q) || m.inputs.concat(m.outputs).some((i) => i.name.toLowerCase().includes(q)))
+  let rows = MM_DATA.methods.filter((m) => (MM.skill === "all" || m.skill === MM.skill || MM.skill === "group:" + m.group) && (!q || m.name.toLowerCase().includes(q) || m.inputs.concat(m.outputs).some((i) => i.name.toLowerCase().includes(q)))
     && (!MM.hideRisky || (!m.stale && !m.thin))).map((m) => {
     const rate = MM.rates[m.name] || m.perHour;
     const eff = m.limitPerHour != null ? Math.min(rate, m.limitPerHour) : rate;
     return Object.assign({}, m, { rateLive: rate, gpHrLive: eff ? m.profit * eff : null, xpHrLive: eff ? m.xp * eff : null, cappedLive: m.limitPerHour != null && rate > m.limitPerHour });
   });
   rows = sortRows(rows, MMS.key, MMS.dir);
-  const legs = (arr, key) => arr.map((i) => `${i.qty !== 1 ? gp(i.qty) + " x " : ""}${esc(i.name)}`).join(", ");
+  const legs = (arr, coins) => arr.map((i) => `${i.qty !== 1 ? gp(i.qty) + " x " : ""}${esc(i.name)}`).join(", ") + (coins ? `, ${short(coins)} gp fee` : "");
   $("#mmTable", host).innerHTML = rows.length ? `<table>${thead([{ label: "Method", sort: "name" }, { label: "Skill", sort: "skill" }, { label: "Lvl", sort: "level", num: 1 }, { label: "Uses" }, { label: "Cost", sort: "cost", num: 1 }, { label: "Profit each", sort: "profit", num: 1 }, { label: "XP", sort: "xp", num: 1 }, { label: "GP / XP", sort: "gpXp", num: 1 }, { label: "Per hour", num: 1, title: "Actions per hour; type your own" }, { label: "GP / hr", sort: "gpHrLive", num: 1 }, { label: "XP / hr", sort: "xpHrLive", num: 1 }], MMS)}<tbody>${rows.map((m) => `
     <tr data-id="${m.id}"><td>${itemCell(m, (m.cappedLive ? ` <span class="tag limit" title="Buy limits allow about ${gp(m.limitPerHour)} per hour">Limit capped</span>` : "") + (m.stale ? ` <span class="tag stale" title="A price is ${ago(m.maxAge)} old">Stale</span>` : "") + (m.thin ? ` <span class="tag thin" title="A leg trades about ${gp(m.minVol24)} a day">Thin</span>` : "") + (m.custom ? ` <span class="tag">Yours</span>` : "") + (m.note ? ` <span class="muted small">${esc(m.note)}</span>` : ""))}</td>
-    <td>${esc(m.skill)}</td><td class="num">${m.level || "-"}</td><td class="small muted" style="max-width:260px">${legs(m.inputs)}</td>
+    <td>${esc(m.skill)}</td><td class="num">${m.level || "-"}</td><td class="small muted" style="max-width:260px">${legs(m.inputs, m.coins)}</td>
     <td class="num">${gp(m.cost)}</td><td class="num ${signCls(m.profit)}"><b>${signed(m.profit)}</b></td><td class="num">${m.xp ? gp(m.xp) : "-"}</td>
     <td class="num ${signCls(m.gpXp)}">${m.gpXp == null ? "-" : m.gpXp.toFixed(2)}</td>
     <td class="num"><input class="input rate" data-rate="${esc(m.name)}" value="${m.rateLive || ""}" inputmode="numeric"></td>
@@ -1110,8 +1123,150 @@ function fcQuery(extra = "") {
   const share = numOr(FC.share, (S.fillShare || 0.2) * 100);
   return `days=${FC.days}&windows=${numOr(FC.windows, 2)}&share=${share}${extra}`;
 }
-renderers.forecast = async function (host) {
-  host.innerHTML = `<h2>Forecast</h2>
+renderers.forecast = function (host) {
+  const mode = store.get("fcMode", "hold");
+  host.innerHTML = `<div class="section-head" style="margin-top:0"><h2 style="margin:0">Forecast</h2>
+      <div class="right"><div class="seg" id="fcModeSeg">${[["hold", "Holding outlook"], ["flip", "Flipping profit"]].map(([k, l]) => `<button data-m="${k}" class="${mode === k ? "on" : ""}">${l}</button>`).join("")}</div></div></div>
+    <div id="fcModeBody"></div>`;
+  $$("#fcModeSeg button", host).forEach((b) => (b.onclick = () => { store.set("fcMode", b.dataset.m); renderers.forecast(host); }));
+  const body = $("#fcModeBody", host);
+  if (mode === "hold") renderHold(body); else renderFlipForecast(body);
+};
+
+// Holding outlook ------------------------------------------------------------------
+const HO = Object.assign({ scope: "portfolio", sel: null, qty: "" }, store.get("ho", {}));
+const HOS = { key: "ret30", dir: "desc" };
+let HO_DATA = null;
+const VERDICT = {
+  hold: { label: "Trends support holding", cls: "free", short: "Hold" },
+  neutral: { label: "No reliable trend either way", cls: "", short: "Neutral" },
+  sell: { label: "Trends favor selling", cls: "trap", short: "Sell" },
+};
+function verdictTag(v, long) { const x = VERDICT[v] || VERDICT.neutral; return `<span class="tag ${x.cls}">${long ? x.label : x.short}</span>`; }
+function sgnPct(x, d = 1) { return x == null ? "-" : (x > 0 ? "+" : "") + pct(x, d); }
+async function renderHold(host) {
+  host.innerHTML = `<p class="lede">If you hold an item, do its trends support keeping it, and what is it likely to be worth later? The model learned from two years of the whole market: for thousands of past moments it recorded each item's trend signals (momentum, distance from its averages, where it sits in its 6 month range, volatility, volume, the market's direction) and what the price did next. It was tested on months it never saw. Values are after the 2% tax on selling.</p>
+    <details class="card" id="hoAcc" style="margin-bottom:14px" ${store.get("hoAccOpen", false) ? "open" : ""}><summary>How reliable is this? <span class="muted small" id="hoAccHint"></span></summary><div id="hoAccBody" style="margin-top:10px"></div></details>
+    <div class="filters">${pickerField("Look up an item", "hoItem")}
+      <label class="field" title="How many you hold (defaults to your portfolio)"><span>Quantity</span><input class="input" id="hoQty" value="${esc(HO.qty)}" placeholder="1"></label></div>
+    <div id="hoDetail"></div>
+    <div class="section-head"><h3>Outlook for</h3><div class="right" style="margin-left:0"><div class="seg" id="hoScope">${[["portfolio", "My portfolio"], ["watch", "Watchlist"], ["market", "Most traded 600"]].map(([k, l]) => `<button data-k="${k}" class="${HO.scope === k ? "on" : ""}">${l}</button>`).join("")}</div></div></div>
+    <div id="hoInfo" class="muted small" style="margin-bottom:6px"></div>
+    <div class="table-wrap" id="hoTable"><div class="empty">Loading...</div></div>`;
+  makePicker($("#hoItem", host), $("#hoItemList", host), (r) => { $("#hoItem", host).value = ""; HO.sel = r.id; store.set("ho", HO); loadHoldDetail(host, r.id); });
+  $("#hoQty", host).onchange = (e) => { HO.qty = e.target.value.trim(); store.set("ho", HO); if (HO.sel) loadHoldDetail(host, HO.sel); };
+  $$("#hoScope button", host).forEach((b) => (b.onclick = () => { HO.scope = b.dataset.k; store.set("ho", HO); $$("#hoScope button", host).forEach((x) => x.classList.toggle("on", x === b)); loadHoldScan(host); }));
+  $("#hoAcc", host).addEventListener("toggle", (e) => store.set("hoAccOpen", e.target.open));
+  loadHoldAccuracy(host);
+  loadHoldScan(host);
+  if (HO.sel) loadHoldDetail(host, HO.sel);
+}
+async function loadHoldScan(host) {
+  const box = $("#hoTable", host);
+  box.innerHTML = `<div class="empty">Loading...</div>`;
+  try { HO_DATA = await api("/api/hold/scan?scope=" + HO.scope); } catch (e) { box.innerHTML = `<div class="notice">${esc(e.message)}</div>`; return; }
+  if (HO_DATA.ok === false) { box.innerHTML = `<div class="notice">${esc(HO_DATA.reason)}</div>`; return; }
+  drawHoldScan(host);
+}
+function drawHoldScan(host) {
+  const d = HO_DATA, box = $("#hoTable", host);
+  const ok = d.items.filter((r) => r.ok), missing = d.items.length - ok.length;
+  $("#hoInfo", host).innerHTML = `The market as a whole moved ${sgnPct(d.market30)} over the last 30 days.` + (missing ? ` ${missing} item(s) need more history.` : "");
+  if (!d.items.length) { box.innerHTML = `<div class="empty">${HO.scope === "portfolio" ? "No holdings yet. Add some on the Portfolio tab, or look up any item above." : HO.scope === "watch" ? "Your watchlist is empty." : "No history imported yet."}</div>`; return; }
+  const rows = sortRows(ok, HOS.key, HOS.dir);
+  box.innerHTML = rows.length ? `<table>${thead([{ label: "" }, { label: "Item", sort: "name" }, { label: "Outlook", sort: "ret30" }, { label: "Price", sort: "price", num: 1 }, { label: "Last 30d", sort: "chg30", num: 1 }, { label: "Next 7d", sort: "ret7", num: 1 }, { label: "Next 30d", sort: "ret30", num: 1, title: "Expected change (middle outcome)" }, { label: "30d likely range", num: 1 }, { label: "Chance up (30d)", sort: "pUp30", num: 1 }, { label: "Next 90d", sort: "ret90", num: 1 }, { label: "Typical monthly move", sort: "monthlyMove", num: 1 }, { label: "Own record: higher after 90d", sort: "own90up", num: 1, title: "Share of this item's past 90 day periods (last two years) that ended higher, and the median change. History, not a prediction." }], HOS)}<tbody>${rows.map((r) => `
+    <tr data-ho="${r.id}"><td>${star(r.id)}</td><td>${itemCell(r)}</td><td>${verdictTag(r.verdict)}</td><td class="num">${gp(r.price)}</td>
+    <td class="num ${signCls(r.chg30)}">${sgnPct(r.chg30)}</td><td class="num ${signCls(r.ret7)}">${sgnPct(r.ret7)}</td>
+    <td class="num ${signCls(r.ret30)}"><b>${sgnPct(r.ret30)}</b></td><td class="num small muted">${sgnPct(r.lo30, 0)} to ${sgnPct(r.hi30, 0)}</td>
+    <td class="num">${pct(r.pUp30, 0)}</td><td class="num ${signCls(r.ret90)}">${sgnPct(r.ret90)}</td><td class="num muted">±${pct(r.monthlyMove, 1)}</td>
+    <td class="num">${r.own90up == null ? "-" : `${pct(r.own90up, 0)} <span class="muted small">(${sgnPct(r.own90med)})</span>`}</td></tr>`).join("")}</tbody></table>` : `<div class="empty">None of these items have enough history yet.</div>`;
+  bindSort(box, HOS, () => drawHoldScan(host));
+  $$("tr[data-ho]", box).forEach((tr) => tr.addEventListener("click", (e) => { if (e.target.closest("button")) return; HO.sel = +tr.dataset.ho; store.set("ho", HO); loadHoldDetail(host, HO.sel); window.scrollTo({ top: 0, behavior: "smooth" }); }));
+  $$(".star", box).forEach((b) => b.addEventListener("click", async (e) => { e.stopPropagation(); await toggleWatch(+b.dataset.id); }));
+}
+async function loadHoldDetail(host, id) {
+  const box = $("#hoDetail", host);
+  box.innerHTML = `<div class="card" style="margin-bottom:14px"><div class="empty">Loading...</div></div>`;
+  let qty = numOr(HO.qty, 0);
+  if (!qty) {
+    try { const p = await api("/api/portfolio"); qty = p.holdings.filter((h) => h.item_id === id).reduce((a, h) => a + h.qty, 0) || 1; } catch (e) { qty = 1; }
+  }
+  let o;
+  try { o = await api(`/api/hold?id=${id}&qty=${Math.round(qty)}`); } catch (e) { box.innerHTML = `<div class="notice">${esc(e.message)}</div>`; return; }
+  const r = S.byId.get(id) || { name: "Item " + id };
+  if (!o.ok) { box.innerHTML = `<div class="notice">${esc(r.name)}: ${esc(o.reason)}</div>`; return; }
+  const f = o.facts, v = VERDICT[o.verdict] || VERDICT.neutral;
+  const now = Math.floor(Date.now() / 1000);
+  box.innerHTML = `<div class="card" style="margin-bottom:14px">
+    <div class="section-head" style="margin-top:0">${itemCell(r)}<div class="right"><button class="btn small" id="hoOpen">Item details</button><button class="btn small ghost" id="hoClose">Close</button></div></div>
+    <div class="callout" style="font-size:14px">${verdictTag(o.verdict, true)} ${o.signal && !o.signal["30"]
+      ? `Tested on two years of market history, trend signals did not reliably predict where prices went next, so no direction is assumed. What history does show: prices like this one were more often lower than higher after a month (${pct((o.points.find((p) => p.h === 30) || {}).pUp, 0)} chance it rises in 30 days), and you pay 2% tax whenever you sell.`
+      : o.reasons.length ? `Mainly because it is ${o.reasons.map((x) => `<b>${esc(x.signal)}</b>`).join(", ")}.` : ""}</div>
+    <div class="tiles">
+      <div class="tile"><div class="k">Worth now</div><div class="v">${short(o.sellNow)}</div><div class="s">${gp(o.qty)} x ${gp(o.priceNow)}, after tax</div></div>
+      ${o.points.map((p) => `<div class="tile"><div class="k">In ${p.h} days</div><div class="v ${signCls(p.ret)}">${short(p.value)}</div><div class="s">${sgnPct(p.ret)} expected · ${short(p.valueLo)} to ${short(p.valueHi)} likely · ${pct(p.pUp, 0)} chance it rises</div></div>`).join("")}
+    </div>
+    <div class="grid2">
+      <div class="chart-card"><div class="chart-head"><span class="title">Price and outlook</span><span class="muted small">Last year, then the expected path with its likely range</span></div><div id="hoChart"></div></div>
+      <div class="card"><h3 style="margin-top:0">Trend facts</h3><div class="kv">
+        <span class="k">Change 7 / 30 / 90 days</span><span>${sgnPct(f.chg7)} / ${sgnPct(f.chg30)} / ${sgnPct(f.chg90)}</span>
+        <span class="k">Change 6 months</span><span>${sgnPct(f.chg180)}</span>
+        <span class="k">vs 30 day average</span><span>${sgnPct(f.vsMa30)}</span>
+        <span class="k">vs 90 day average</span><span>${sgnPct(f.vsMa90)}</span>
+        <span class="k">6 month range</span><span>${short(f.low180)} to ${short(f.high180)} (now ${pct(f.range180, 0)} of the way up)</span>
+        <span class="k">Typical monthly move</span><span>±${pct(f.monthlyMove, 1)}</span>
+        <span class="k">Volume, last 7 vs 60 days</span><span>${sgnPct(f.volumeTrend, 0)}</span>
+        <span class="k">Whole market, 30 days</span><span>${sgnPct(f.market30)}</span>
+        ${f.own30 ? `<span class="k">This item's own record</span><span>higher after 30 days in ${pct(f.own30.up, 0)} of past periods (median ${sgnPct(f.own30.median)}); after 90 days in ${f.own90 ? pct(f.own90.up, 0) : "-"} (median ${f.own90 ? sgnPct(f.own90.median) : "-"})</span>` : ""}
+      </div></div>
+    </div>
+    <p class="small muted" style="margin:6px 0 0">Values are the middle of realistic outcomes; about 8 in 10 real outcomes landed inside the likely range. An item's own record describes its past, it is not a prediction (these patterns have flipped before). Updates, new content and bot bans can move prices in ways no trend predicts.</p></div>`;
+  const pts = [{ t: now, v: o.priceNow }].concat(o.points.map((p) => ({ t: now + p.h * 86400, v: p.price })));
+  const band = [{ t: now, lo: o.priceNow, hi: o.priceNow }].concat(o.points.map((p) => ({ t: now + p.h * 86400, lo: p.priceLo, hi: p.priceHi })));
+  lineChart($("#hoChart", box), [
+    { name: "Price", cls: "l1", color: "var(--series-1)", pts: o.history.map((h) => ({ t: h.t, v: h.v })) },
+    { name: "Outlook", cls: "l2", color: "var(--series-2)", dash: true, pts, band },
+  ], { height: 230, noEndLabels: true, aria: "Price history and holding outlook", tipFmt: (x) => gp(x) });
+  $("#hoOpen", box).onclick = () => openItem(id);
+  $("#hoClose", box).onclick = () => { HO.sel = null; store.set("ho", HO); box.innerHTML = ""; };
+}
+let HO_POLL = null;
+async function loadHoldAccuracy(host) {
+  let d;
+  try { d = await api("/api/hold/model"); } catch (e) { return; }
+  const body = $("#hoAccBody", host), hint = $("#hoAccHint", host);
+  if (!body) return;
+  const r = d.report, running = d.status.startsWith("running");
+  hint.textContent = running ? "Retraining..." : r ? `tested on ${gp(r.test["30"] ? r.test["30"].cases : 0)} past moments` : "";
+  let html = "";
+  if (r) {
+    const day = (t) => new Date(t * 1000).toLocaleDateString([], { month: "short", year: "numeric" });
+    html += `<p class="small" style="margin:0 0 8px">${d.source === "bundled" ? "The shipped model" : "Your retrained model"} learned from ${gp(r.items)} of the most traded items, ${esc(day(r.from))} to ${esc(day(r.to))}. It was fitted on data before ${esc(day(r.split))} and tested on the months after, which it never saw:</p>
+      <div class="table-wrap"><table>${thead([{ label: "Held out test" }, ...["7", "30", "90"].filter((h) => r.test[h]).map((h) => ({ label: h + " days", num: 1 }))], null)}<tbody>
+      ${[["Better than assuming no change (above 0 is better)", (t) => (t.skill == null ? "-" : t.skill.toFixed(3))],
+         ["Direction right when it expected a move", (t) => pct(t.direction, 0)],
+         ["Items it rated best (top fifth): real change", (t) => sgnPct(t.topFifth)],
+         ["Items it rated worst (bottom fifth): real change", (t) => sgnPct(t.bottomFifth)],
+         ["Said \"hold\": rose afterwards", (t) => (t.verdicts.hold.n ? `${pct(t.verdicts.hold.rose, 0)} of ${gp(t.verdicts.hold.n)}, avg ${sgnPct(t.verdicts.hold.avg)}` : "never said it")],
+         ["Said \"sell\": rose afterwards", (t) => (t.verdicts.sell.n ? `${pct(t.verdicts.sell.rose, 0)} of ${gp(t.verdicts.sell.n)}, avg ${sgnPct(t.verdicts.sell.avg)}` : "never said it")],
+         ["Real outcome inside the likely range (aim 80%)", (t) => pct(t.coverage, 0)]].map(([label, fn]) => `<tr class="static"><td>${label}</td>${["7", "30", "90"].filter((h) => r.test[h]).map((h) => `<td class="num">${fn(r.test[h])}</td>`).join("")}</tr>`).join("")}
+      </tbody></table></div>
+      <p class="small" style="margin:8px 0 0">${Object.values(r.signalUsed || {}).some(Boolean) ? `Trend signals are used for: ${Object.entries(r.signalUsed).filter(([, v]) => v).map(([h]) => h + " days").join(", ")}.` : `<b>No trend signal beat "no change" on the test months, so none is used.</b> In 2025 items that had risen tended to fall back; in 2026 they kept rising. Because the pattern flips, betting on either would have been confidently wrong for months. The outlook therefore centers on today's value, with odds and ranges from how prices really moved.`}</p>
+      ${r.baseRates ? `<p class="small muted" style="margin:6px 0 0">Across the most traded items over two years, prices were higher 30 days later ${pct(r.baseRates.all["30"].up, 0)} of the time (median ${sgnPct(r.baseRates.all["30"].median)}) and 90 days later ${pct(r.baseRates.all["90"].up, 0)} of the time (median ${sgnPct(r.baseRates.all["90"].median)}). In the last six months: ${pct(r.baseRates.recent["90"].up, 0)} higher after 90 days, median ${sgnPct(r.baseRates.recent["90"].median)}.</p>` : ""}`;
+  }
+  html += `<div class="inline-form"><button class="btn" id="hoTrain" ${running || d.dailyDays < 270 ? "disabled" : ""}>${running ? esc(d.status.replace("running: ", "")) + "..." : "Retrain on my history"}</button><span class="small muted">${d.dailyDays < 270 ? `Needs about 270 days of imported history (you have ${d.dailyDays}).` : "Refits on your imported history, including the newest days. Takes about a minute."}</span></div>
+    ${d.status.startsWith("failed") ? `<div class="small err">${esc(d.status)}</div>` : ""}`;
+  body.innerHTML = html;
+  const b = $("#hoTrain", host);
+  if (b) b.onclick = async () => { await api("/api/hold/train", { method: "POST" }); loadHoldAccuracy(host); };
+  clearTimeout(HO_POLL);
+  if (running) HO_POLL = setTimeout(() => { if (S.tab === "forecast") loadHoldAccuracy(host); }, 4000);
+  else if (hint.dataset.was === "running") { loadHoldScan(host); if (HO.sel) loadHoldDetail(host, HO.sel); }
+  hint.dataset.was = running ? "running" : "";
+}
+
+async function renderFlipForecast(host) {
+  host.innerHTML = `
     <p class="lede">Estimates what flipping each item would earn over the coming days, from its demand (instant-buy and instant-sell volume), today's margin fading toward its usual margin, and a price trend fitted to your saved history. The range comes from replaying the item's own past good and bad days. Long horizons carry more risk, so read the range, not just the middle.</p>
     <div class="filters">
       <div class="field"><span>Horizon</span><div class="seg" id="fcDays" style="margin-left:0">${[7, 30, 90].map((d) => `<button data-d="${d}" class="${FC.days === d ? "on" : ""}">${d} days</button>`).join("")}</div></div>
@@ -1124,7 +1279,7 @@ renderers.forecast = async function (host) {
     <div id="fcDetail"></div>
     <div id="fcInfo" class="muted small" style="margin-bottom:6px"></div>
     <div class="table-wrap" id="fcTable"><div class="empty">Building forecasts...</div></div>`;
-  $$("#fcDays button", host).forEach((b) => (b.onclick = () => { FC.days = +b.dataset.d; store.set("fc", FC); renderers.forecast(host); }));
+  $$("#fcDays button", host).forEach((b) => (b.onclick = () => { FC.days = +b.dataset.d; store.set("fc", FC); renderFlipForecast(host); }));
   const reload = () => { store.set("fc", FC); loadForecastRank(host); if (FC.sel) loadForecastDetail(host, FC.sel); };
   $("#fcWin", host).onchange = (e) => { FC.windows = e.target.value; reload(); };
   $("#fcShare", host).onchange = (e) => { FC.share = e.target.value; reload(); };
@@ -1601,7 +1756,7 @@ async function openItem(id) {
         <div class="seg" id="drSeason">${[14, 30, 90].map((dd) => `<button data-d="${dd}" class="${DR.season === dd ? "on" : ""}">${dd}d</button>`).join("")}</div></div>
       <div id="drHeat"><div class="empty">Loading...</div></div><div id="drHeatNote" class="small" style="margin-top:6px"></div>
     </div>
-    <div class="card" style="margin-bottom:14px"><div class="section-head" style="margin-top:0"><h3>30 day forecast</h3><div class="right"><button class="btn small" id="drFc">Full forecast</button></div></div><div id="drFcBody" class="small"><div class="muted">Loading...</div></div></div>
+    <div class="card" style="margin-bottom:14px"><div class="section-head" style="margin-top:0"><h3>Outlook</h3><div class="right"><button class="btn small" id="drHo">Holding outlook</button><button class="btn small" id="drFc">Flipping forecast</button></div></div><div id="drHoBody" class="small" style="margin-bottom:8px"><div class="muted">Loading...</div></div><div id="drFcBody" class="small"><div class="muted">Loading...</div></div></div>
     <div class="grid2">
       <div class="card"><h3 style="margin-top:0">Moves with</h3><div id="drCorr" class="small"><div class="muted">Loading...</div></div></div>
       <div class="card"><h3 style="margin-top:0">Recipes and sets</h3><div id="drRec" class="small"><div class="muted">Loading...</div></div></div>
@@ -1654,11 +1809,22 @@ async function openItem(id) {
   };
   $("#drBe").addEventListener("input", (e) => { const b = numOr(e.target.value, NaN); $("#drBeOut").textContent = Number.isFinite(b) ? gp(breakeven(b, r)) : "-"; });
   $$("#drSeason button").forEach((b) => (b.onclick = () => { DR.season = +b.dataset.d; store.set("season", DR.season); $$("#drSeason button").forEach((x) => x.classList.toggle("on", x === b)); loadSeason(id); }));
-  $("#drFc").onclick = () => { FC.sel = id; FC.days = 30; store.set("fc", FC); closeItem(); showTab("forecast"); };
+  $("#drFc").onclick = () => { FC.sel = id; FC.days = 30; store.set("fc", FC); store.set("fcMode", "flip"); closeItem(); showTab("forecast"); };
+  $("#drHo").onclick = () => { HO.sel = id; store.set("ho", HO); store.set("fcMode", "hold"); closeItem(); showTab("forecast"); };
   loadChart(id);
   loadSeason(id);
   loadDrawerForecast(id);
+  loadDrawerHold(id);
   loadRelated(id, r);
+}
+async function loadDrawerHold(id) {
+  let o;
+  try { o = await api(`/api/hold?id=${id}&qty=1`); } catch (e) { o = { ok: false, reason: e.message }; }
+  const box = $("#drHoBody");
+  if (!box || S.openId !== id) return;
+  if (!o.ok) { box.innerHTML = `<span class="muted">Holding: ${esc(o.reason)}</span>`; return; }
+  const p30 = o.points.find((p) => p.h === 30), p90 = o.points.find((p) => p.h === 90);
+  box.innerHTML = `<b>Holding:</b> ${verdictTag(o.verdict, true)} Expected ${p30 ? `<b class="${signCls(p30.ret)}">${sgnPct(p30.ret)}</b> in 30 days (${sgnPct(p30.lo, 0)} to ${sgnPct(p30.hi, 0)}, ${pct(p30.pUp, 0)} chance it rises)` : ""}${p90 ? ` and <b class="${signCls(p90.ret)}">${sgnPct(p90.ret)}</b> in 90 days` : ""}.`;
 }
 async function loadDrawerForecast(id) {
   let f;
@@ -1667,7 +1833,7 @@ async function loadDrawerForecast(id) {
   if (!box || S.openId !== id) return;
   if (!f.ok) { box.innerHTML = `<span class="muted">${esc(f.reason)}</span>`; return; }
   const s = f.summary;
-  box.innerHTML = `Flipping this for 30 days (2 limit windows a day) would likely earn <b class="${signCls(s.p50)}">${signed(s.p50, short)}</b>, with 8 in 10 outcomes between <b>${short(s.p10)}</b> and <b>${short(s.p90)}</b> and a ${pct(s.lossChance, 0)} chance of a loss. Price ${s.useTrend ? `trend: <b class="${signCls(s.priceChange)}">${s.priceChange > 0 ? "+" : ""}${pct(s.priceChange, 1)}</b>` : "is assumed flat"}. ${confTag(f.confidence)}`;
+  box.innerHTML = `<b>Flipping:</b> doing this for 30 days (2 limit windows a day) would likely earn <b class="${signCls(s.p50)}">${signed(s.p50, short)}</b>, with 8 in 10 outcomes between <b>${short(s.p10)}</b> and <b>${short(s.p90)}</b> and a ${pct(s.lossChance, 0)} chance of a loss. Price ${s.useTrend ? `trend: <b class="${signCls(s.priceChange)}">${s.priceChange > 0 ? "+" : ""}${pct(s.priceChange, 1)}</b>` : "is assumed flat"}. ${confTag(f.confidence)}`;
 }
 async function loadSeason(id) {
   const host = $("#drHeat");

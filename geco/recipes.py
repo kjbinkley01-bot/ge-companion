@@ -113,6 +113,41 @@ PLANKS = [("Logs", "Plank", 100), ("Oak logs", "Oak plank", 250), ("Teak logs", 
 BUILD = [("Oak plank", 33, 60, 3500), ("Teak plank", 50, 90, 3500), ("Mahogany plank", 52, 140, 3000)]
 
 
+# Barrows: brother, [(piece, repair cost at an NPC)]. Broken pieces ("... 0") are tradeable.
+# Repairing on your own armour stand costs (1 - Smithing level / 200) of that.
+BARROWS = {
+    "Ahrim's": [("hood", 60000), ("robetop", 90000), ("robeskirt", 80000), ("staff", 100000)],
+    "Dharok's": [("helm", 60000), ("platebody", 90000), ("platelegs", 80000), ("greataxe", 100000)],
+    "Guthan's": [("helm", 60000), ("platebody", 90000), ("chainskirt", 80000), ("warspear", 100000)],
+    "Karil's": [("coif", 60000), ("leathertop", 90000), ("leatherskirt", 80000), ("crossbow", 100000)],
+    "Torag's": [("helm", 60000), ("platebody", 90000), ("platelegs", 80000), ("hammers", 100000)],
+    "Verac's": [("helm", 60000), ("brassard", 90000), ("plateskirt", 80000), ("flail", 100000)],
+}
+
+# Enchant crossbow bolts: gem, Magic level, XP per cast (10 bolts), non-elemental runes.
+# Elemental runes are assumed to come from a staff.
+ENCHANT = [("Opal", 4, 9, [("Cosmic rune", 1)]), ("Sapphire", 7, 17.5, [("Cosmic rune", 1), ("Mind rune", 1)]),
+           ("Emerald", 27, 37, [("Cosmic rune", 1), ("Nature rune", 1)]), ("Topaz", 29, 33, [("Cosmic rune", 1)]),
+           ("Ruby", 49, 59, [("Cosmic rune", 1), ("Blood rune", 1)]),
+           ("Diamond", 57, 67, [("Cosmic rune", 1), ("Law rune", 2)]),
+           ("Dragonstone", 68, 78, [("Cosmic rune", 1), ("Soul rune", 1)]),
+           ("Onyx", 87, 97, [("Cosmic rune", 1), ("Death rune", 1)])]
+
+# Tip bolts: gem, base bolts, Fletching level, XP per bolt.
+TIPS = [("Ruby", "Adamant bolts", 63, 6.3), ("Diamond", "Adamant bolts", 65, 7),
+        ("Dragonstone", "Runite bolts", 71, 8.2), ("Onyx", "Runite bolts", 73, 9.4)]
+
+# Gold jewellery: gem, [(piece, Crafting level, XP)].
+JEWELLERY = [
+    ("Sapphire", [("ring", 20, 40), ("necklace", 22, 55), ("bracelet", 23, 60), ("amulet (u)", 24, 65)]),
+    ("Emerald", [("ring", 27, 55), ("necklace", 29, 60), ("bracelet", 30, 65), ("amulet (u)", 31, 70)]),
+    ("Ruby", [("ring", 34, 70), ("necklace", 40, 75), ("bracelet", 42, 80), ("amulet (u)", 50, 85)]),
+    ("Diamond", [("ring", 43, 85), ("necklace", 56, 90), ("bracelet", 58, 95), ("amulet (u)", 70, 100)]),
+    ("Dragonstone", [("ring", 55, 100), ("bracelet", 74, 110), ("amulet (u)", 80, 150)]),
+    ("Onyx", [("ring", 67, 115), ("necklace", 82, 120), ("bracelet", 84, 125), ("amulet (u)", 90, 165)]),
+]
+
+
 def _processing():
     out = []
     for clean, grimy, unf, lvl, xp, unf_lvl in HERBS:
@@ -186,6 +221,32 @@ def _processing():
     for plank, lvl, xp, rate in BUILD:
         out.append(R(f"Build with {plank.lower()}s", "Construction", lvl, xp, [(plank, 1)], [], rate,
                      note="Per plank, butler costs not counted"))
+    for brother, pieces in BARROWS.items():
+        for piece, fee in pieces:
+            item = f"{brother} {piece}"
+            rec = R(f"Repair {item}", "Smithing", 1, 0, [(f"{item} 0", 1)], [(item, 1)], 60, coins=fee,
+                    group="Barrows repair", note="Fee drops with your Smithing level on a house armour stand")
+            rec["repair"] = fee
+            out.append(rec)
+    for gem, lvl, xp, runes in ENCHANT:
+        out.append(R(f"Enchant {gem.lower()} bolts", "Magic", lvl, xp, [(f"{gem} bolts", 10)] + runes,
+                     [(f"{gem} bolts (e)", 10)], 1400, note="Per cast of 10, elemental runes from a staff"))
+        out.append(R(f"Enchant {gem.lower()} dragon bolts", "Magic", lvl, xp,
+                     [(f"{gem} dragon bolts", 10)] + runes, [(f"{gem} dragon bolts (e)", 10)], 1400,
+                     note="Per cast of 10, elemental runes from a staff"))
+    for gem, base, lvl, xp in TIPS:
+        out.append(R(f"Tip {gem.lower()} bolts", "Fletching", lvl, xp * 10,
+                     [(base, 10), (f"{gem} bolt tips", 10)], [(f"{gem} bolts", 10)], 2000, note="Per set of 10"))
+        out.append(R(f"Tip {gem.lower()} dragon bolts", "Fletching", lvl, xp * 10,
+                     [("Dragon bolts", 10), (f"{gem} bolt tips", 10)], [(f"{gem} dragon bolts", 10)], 2000,
+                     note="Per set of 10, needs 84 Fletching for dragon bolts"))
+    out.append(R("Gold ring", "Crafting", 5, 15, [("Gold bar", 1)], [("Gold ring", 1)], 1300))
+    out.append(R("Gold amulet (u)", "Crafting", 8, 30, [("Gold bar", 1)], [("Gold amulet (u)", 1)], 1300))
+    for gem, pieces in JEWELLERY:
+        for piece, lvl, xp in pieces:
+            name = f"{gem} {piece}"
+            out.append(R(name, "Crafting", lvl, xp, [("Gold bar", 1), (gem, 1)], [(name, 1)], 1300,
+                         note="Furnace with a mould"))
     return out
 
 
@@ -365,6 +426,7 @@ def evaluate(recipe, pricer, patient=True, per_hour=None):
         "stale": bool(max_age is not None and max_age > pricer.stale_s),
         "minVol24": min_vol, "thin": bool(min_vol is not None and min_vol < 100),
         "custom": recipe.get("custom", False), "rid": recipe.get("rid"),
+        "coins": round(float(recipe.get("coins") or 0)),
     }
 
 
@@ -384,11 +446,20 @@ def custom_recipes(db):
     return out
 
 
-def money_making(pricer, db=None, patient=True, rates=None):
+def repair_cost(fee, smithing=None):
+    """NPC price, or the player-owned armour stand price for a Smithing level (1 to 99)."""
+    if smithing:
+        return fee * (1 - max(1, min(99, int(smithing))) / 200.0)
+    return fee
+
+
+def money_making(pricer, db=None, patient=True, rates=None, smithing=None):
     rates = rates or {}
     recs = PROCESSING + (custom_recipes(db) if db is not None else [])
     out = []
     for rec in recs:
+        if rec.get("repair"):
+            rec = dict(rec, coins=repair_cost(rec["repair"], smithing))
         ev = evaluate(rec, pricer, patient, rates.get(rec["name"]))
         if ev:
             out.append(ev)

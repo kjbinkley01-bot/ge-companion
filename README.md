@@ -32,10 +32,11 @@ Want to look around offline? Run `start.bat --demo` for synthetic prices.
 | Alerts | Price, profit, ROI, 1h move, rise, drop, volume, stability, spike and dump. Combine conditions with AND, point an alert at every watchlist item at once, and get desktop notifications when the tab is in the background. Buy limit resets are announced too. |
 | Flip log | Real buys and sells with profit after tax, an equity curve, worst drawdown, profit by day, hour and weekday, hold times, your buy and sell edge vs the market, buy limits in use, and CSV export. |
 | Portfolio | Holdings and cash stack valued live, unrealized profit, 24h change, allocation, open flips, and an hourly net worth chart. Paste a list like `2 x Abyssal whip` to import. |
-| Money making | About 140 processing and skilling methods priced live and ranked by GP per hour (herblore, crafting, fletching, smithing, cooking, construction and more), with buy limit caps, GP per XP, your own rates, and your own custom recipes. Item set arbitrage for about 100 sets, both combining and splitting. |
+| Money making | About 220 processing and skilling methods (including Barrows repair, bolt tipping and enchanting, and gold jewellery) priced live and ranked by GP per hour (herblore, crafting, fletching, smithing, cooking, construction and more), with buy limit caps, GP per XP, your own rates, and your own custom recipes. Item set arbitrage for about 100 sets, both combining and splitting. |
 | High alch | Profit per cast after the nature rune, GP per XP, profit per buy limit. |
 | Decanting | Cheapest dose per potion to buy and decant to 4-dose at Bob Barter, with profit per limit. |
 | Forecast | Expected flip profit per item over the next 7, 30 or 90 days, from demand (instant-buy and instant-sell volume), today's margin fading toward its usual level, and a price trend that is only used when it beat "no change" on recent days. A simulation of the item's own past good and bad days gives a likely range and the chance of a loss, plus what holding one limit would return instead. |
+| Forecast: holding outlook | For anything you hold (or any item): do its trends support keeping it, and what is it likely to be worth in 7, 30 and 90 days after tax, with a likely range and the chance it rises. Built from two years of the whole market and tested on months it never saw; it only uses trend signals that proved themselves on that test, and says plainly when none did. Also shows each item's own record and trend facts, and an outlook column on the Portfolio tab. |
 | Backtest | Replay a rule (buy the dip, buy dumps, margin flips, breakouts) over your saved hourly history: trades, win rate, returns, drawdown, equity curve, return histogram, best items, and a comparison with just holding. |
 | Account | Hiscores lookup (regular, iron, hardcore, ultimate), XP and kill count gains over time, goals with pace, ETA and the cheapest ways to get there at live prices, a drop log with loot value per boss, and dry streak odds for the items you are chasing. |
 | Item panel | Click any item: prices, tax, ROI, stability, fill time, your buy limit, break-even sell price, charts from 6 hours to 1 year, the best hour and weekday to buy and sell, items that move with it, and recipes and sets it belongs to. |
@@ -54,8 +55,8 @@ Want to look around offline? Run `start.bat --demo` for synthetic prices.
   Settings, or raise History backfill (up to 30 days) for longer analytics from day one.
 * **Fills are shared.** Other flippers compete for the same trades, so estimates assume you
   win a share (20% by default, in Settings) of the volume you buy from and sell into.
-* **Market history import.** On first start the app also imports a year of daily prices and
-  volumes for every item (365 bulk requests, one a second, in the background). The forecast
+* **Market history import.** On first start the app also imports two years of daily prices and
+  volumes for every item (730 bulk requests, one a second, in the background). The forecast
   uses it, and the Forecast tab can backtest and re-tune itself on it. Change the number of
   days in Settings, or set it to 0 to skip.
 * **Backups.** A copy of the database is saved to `data/backups` once a day (the last 7 are
