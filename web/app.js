@@ -78,7 +78,8 @@ function toast(title, msg, onClick) {
 const S = {
   rows: [], byId: new Map(), nature: null, watch: new Set(), now: 0, status: {},
   limits: {}, tax: null, fillShare: 0.2,
-  tab: store.get("tab", "flips"), lastNid: 0, loaded: false,
+  // The app opens on Net worth; a page refresh returns to the tab you were on.
+  tab: (() => { try { return sessionStorage.getItem("geco.tab") || "networth"; } catch (e) { return "networth"; } })(), lastNid: 0, loaded: false,
 };
 
 // Theme --------------------------------------------------------------------------
@@ -460,8 +461,10 @@ async function toggleWatch(id) {
 // Tabs ---------------------------------------------------------------------------
 const renderers = {};
 function showTab(name) {
-  S.tab = name; store.set("tab", name);
-  $$("#tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
+  S.tab = name;
+  try { sessionStorage.setItem("geco.tab", name); } catch (e) { /* storage unavailable */ }
+  document.body.classList.remove("nav-open"); $("#navScrim").hidden = true;
+  $$("#tabs button[data-tab]").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
   $$(".tab").forEach((s) => (s.hidden = s.id !== "tab-" + name));
   renderTab(name);
 }
@@ -469,7 +472,12 @@ function renderTab(name, soft) {
   const fn = renderers[name];
   if (fn) fn($("#tab-" + name), soft);
 }
-$$("#tabs button").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
+$$("#tabs button[data-tab]").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
+// Side menu: collapse to icons on desktop, slide in over the page on small screens.
+if (store.get("navCollapsed", false)) document.body.classList.add("nav-collapsed");
+$("#navCollapse").onclick = () => { const c = document.body.classList.toggle("nav-collapsed"); store.set("navCollapsed", c); window.dispatchEvent(new Event("resize")); };
+$("#navBtn").onclick = () => { const o = document.body.classList.toggle("nav-open"); $("#navScrim").hidden = !o; };
+$("#navScrim").onclick = () => { document.body.classList.remove("nav-open"); $("#navScrim").hidden = true; };
 
 // Flip finder --------------------------------------------------------------------
 const FF = Object.assign({
@@ -965,7 +973,7 @@ renderers.portfolio = async function (host) {
   let p;
   try { p = await api("/api/portfolio"); } catch (e) { host.innerHTML = `<div class="notice">${esc(e.message)}</div>`; return; }
   const t = p.totals;
-  host.innerHTML = `<h2>Portfolio</h2>
+  host.innerHTML = `<h2>Manual holdings</h2>
     <p class="lede">Track what you hold (bank, stock you are sitting on) and your cash stack. Items are valued at the instant-buy price after tax, what they would fetch listed at the going rate. Open flips from the flip log count too. Net worth is saved every hour while the app runs.</p>
     <div class="tiles">
       <div class="tile"><div class="k">Net worth</div><div class="v">${short(t.total)}</div><div class="s">${gp(t.total)} gp</div></div>
@@ -2786,7 +2794,7 @@ async function loadMarket() {
     S.watch = new Set(d.watchlist); S.now = d.now; S.status = d.status;
     S.limits = d.limits || {}; S.tax = d.tax; S.fillShare = d.fillShare;
     setLive();
-    if (!S.loaded) { S.loaded = true; showTab(S.tab in renderers ? S.tab : "flips"); }
+    if (!S.loaded) { S.loaded = true; showTab(S.tab in renderers ? S.tab : "networth"); }
     else if (["flips", "movers", "alch", "market", "networth"].includes(S.tab)) renderTab(S.tab, true);
   } catch (e) {
     $("#liveStatus").className = "live bad"; $(".txt", $("#liveStatus")).textContent = "App not running";

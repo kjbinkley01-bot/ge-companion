@@ -96,17 +96,45 @@ a:hover { text-decoration: underline; }
   display: grid; place-items: center;
 }
 
-/* Tabs */
-.tabs {
-  display: flex; gap: 2px; padding: 0 20px; background: var(--surface);
-  border-bottom: 1px solid var(--border); overflow-x: auto; position: sticky; top: 55px; z-index: 20;
+/* Side menu (Legend style): sections of icon + label, collapsible to icons. */
+.sidenav {
+  position: fixed; top: 55px; bottom: 0; left: 0; width: 212px; z-index: 25; overflow-y: auto;
+  background: var(--surface); border-right: 1px solid var(--border); padding: 10px 8px 12px;
+  display: flex; flex-direction: column; gap: 6px;
 }
-.tabs button {
-  background: none; border: 0; border-bottom: 2px solid transparent; color: var(--text-2);
-  padding: 11px 10px; font: inherit; font-weight: 600; cursor: pointer; white-space: nowrap;
+.nav-sec { display: flex; flex-direction: column; gap: 1px; }
+.nav-h { font-size: 10px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); padding: 10px 10px 4px; white-space: nowrap; }
+.sidenav button {
+  display: flex; align-items: center; gap: 10px; width: 100%; background: none; border: 0; border-radius: 8px;
+  color: var(--text-2); padding: 7px 10px; font: inherit; font-weight: 600; cursor: pointer; text-align: left; white-space: nowrap;
 }
-.tabs button:hover { color: var(--text); }
-.tabs button.active { color: var(--text); border-bottom-color: var(--accent); }
+.sidenav button svg { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.sidenav button:hover { color: var(--text); background: var(--surface-2); }
+.sidenav button.active { color: var(--text); background: var(--accent-bg); }
+.sidenav button.active svg { stroke: var(--accent); }
+.nav-foot { margin-top: auto; border-top: 1px solid var(--border); padding-top: 8px; display: flex; flex-direction: column; gap: 1px; }
+.nav-btn { display: none; }
+body { padding-left: 212px; }
+body.nav-collapsed { padding-left: 60px; }
+body.nav-collapsed .sidenav { width: 60px; }
+body.nav-collapsed .sidenav button span, body.nav-collapsed .nav-h { display: none; }
+body.nav-collapsed .sidenav button { justify-content: center; padding: 8px; }
+body.nav-collapsed .nav-sec + .nav-sec { border-top: 1px solid var(--border); padding-top: 6px; }
+body.nav-collapsed .nav-collapse svg { transform: rotate(180deg); }
+.topbar { margin-left: -212px; }
+body.nav-collapsed .topbar { margin-left: -60px; }
+.nav-scrim { z-index: 24; }
+@media (max-width: 900px) {
+  body, body.nav-collapsed { padding-left: 0; }
+  .topbar, body.nav-collapsed .topbar { margin-left: 0; }
+  .nav-btn { display: grid; }
+  .sidenav, body.nav-collapsed .sidenav { top: 0; z-index: 45; width: 240px; transform: translateX(-100%); transition: transform .18s ease; box-shadow: var(--shadow); }
+  .nav-scrim { z-index: 44; }
+  body.nav-open .sidenav { transform: none; }
+  body.nav-collapsed .sidenav button span, body.nav-collapsed .nav-h { display: revert; }
+  body.nav-collapsed .sidenav button { justify-content: flex-start; padding: 7px 10px; }
+  .nav-collapse { display: none !important; }
+}
 main { padding: 18px 20px 60px; max-width: 1500px; margin: 0 auto; }
 h2 { font-size: 17px; margin: 0 0 4px; }
 h3 { font-size: 14px; margin: 18px 0 8px; }
@@ -270,7 +298,6 @@ svg.chart .dot2 { fill: var(--series-2); stroke: var(--surface); stroke-width: 2
   .grid2 { grid-template-columns: 1fr; }
   .topbar { flex-wrap: wrap; padding: 10px 16px; }
   .search-wrap { order: 3; max-width: none; flex-basis: 100%; }
-  .tabs { top: 0; position: static; padding: 0 16px; }
   main { padding: 14px 16px 60px; }
   .live .txt { display: none; }
 }

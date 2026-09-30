@@ -79,7 +79,8 @@ A free alternative to GE Tracker premium, built only on public, read-only data.
   split into older and newer halves). The hourly backtester also has rsi, ma_cross, bollinger.
 * `geco/demo_feed.py`: writes plugin format events in demo mode (`data/demo-runelite`).
 * `geco/server.py`: JSON API plus static files, bound to 127.0.0.1.
-* `web/`: vanilla JS dashboard (`app.js`), no build step. Charts are hand-rolled SVG
+* `web/`: vanilla JS dashboard (`app.js`), no build step. Sectioned side menu (collapsible to
+  icons, a slide-in drawer on phones); the app opens on Net worth. Charts are hand-rolled SVG
   (`priceChart`, `lineChart`, `barChart`, `heatmap`, `tradingChart`, `treemap`), colors are
   CSS tokens in `style.css`. The theme follows Robinhood Legend (black canvas, green brand,
   orange-red down). Series colors were checked with the dataviz palette validator in both
