@@ -186,6 +186,31 @@ class ServerSecurityTests(Base):
         c.close()
         return r.status
 
+    def get_json(self, path):
+        c = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        c.request("GET", path, headers={"Host": f"127.0.0.1:{self.port}"})
+        r = c.getresponse()
+        body = json.loads(r.read())
+        c.close()
+        return body
+
+    def test_recent_orders_and_sparks(self):
+        now = time.time()
+        self.write([offer(now - 900, 0, "BUYING", SHARK, 1000, 10, 0, 0),
+                    offer(now - 800, 0, "BOUGHT", SHARK, 1000, 10, 10, 10_000),
+                    offer(now - 700, 1, "SELLING", WHIP, 900_000, 2, 0, 0),
+                    offer(now - 600, 2, "BUYING", SHARK, 990, 50, 0, 0),
+                    offer(now - 500, 2, "BUYING", SHARK, 990, 50, 20, 19_800),
+                    offer(now - 400, 2, "CANCELLED_BUY", SHARK, 990, 50, 20, 19_800)])
+        account.ingest(self.db, self.folder)
+        orders = self.get_json("/api/account/offers")["orders"]
+        self.assertEqual(orders[0]["status"], "Working")
+        self.assertEqual((orders[0]["item"], orders[0]["side"]), (WHIP, "sell"))
+        self.assertEqual({o["status"] for o in orders[1:]}, {"Filled", "Partial"})
+        self.db.store_window("h1", int(now) // 3600 * 3600 - 3600, {SHARK: {"avgHighPrice": 1010, "avgLowPrice": 990, "highPriceVolume": 5, "lowPriceVolume": 5}})
+        sp = self.get_json(f"/api/sparks?ids={SHARK},{WHIP}")["sparks"]
+        self.assertEqual(sp[str(SHARK)][0][1], 1000)
+
     def test_host_and_origin_checks(self):
         ok_host = {"Host": f"127.0.0.1:{self.port}"}
         self.assertNotEqual(self.req("GET", "/api/unknown", ok_host), 403)

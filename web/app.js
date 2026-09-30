@@ -490,12 +490,19 @@ const PAGE_GROUPS = [
   ["Skilling and tools", [["money", "Money making"], ["alch", "High alch"], ["decant", "Decanting"], ["account", "Account"], ["settings", "Settings"]]],
 ];
 const PAGE_LABEL = Object.fromEntries(PAGE_GROUPS.flatMap(([, p]) => p));
-let OPEN_TABS = store.get("openTabs", ["networth", "terminal", "statement", "flips", "market", "news"]).filter((k) => PAGE_LABEL[k]);
+let OPEN_TABS = store.get("openTabs", ["networth", "terminal", "statement", "flips", "market", "news"]).filter((k) => PAGE_LABEL[k] || k.startsWith("L:"));
+const isLayoutTab = (k) => typeof k === "string" && k.startsWith("L:");
+function tabLabel(k) { return isLayoutTab(k) ? ((layoutById(k.slice(2)) || {}).name || "Layout") : PAGE_LABEL[k] || (k === "templates" ? "Templates" : k); }
+function tabIcon(k) { return isLayoutTab(k) ? pageIcon((layoutById(k.slice(2)) || {}).icon || "market") : pageIcon(k === "templates" ? "market" : k); }
 const pageIcon = (k) => `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${PAGE_ICONS[k] || PAGE_ICONS.market}"/></svg>`;
 function drawTabs() {
-  const list = OPEN_TABS.includes(S.tab) || !PAGE_LABEL[S.tab] ? OPEN_TABS : OPEN_TABS.concat(S.tab);
-  $("#tabs").innerHTML = list.map((k) => `<button data-tab="${k}" class="${k === S.tab ? "active" : ""}" title="${esc(PAGE_LABEL[k])}">${pageIcon(k)}<span>${esc(PAGE_LABEL[k])}</span>${list.length > 1 ? `<i class="tab-x" data-close="${k}" title="Close tab" aria-label="Close tab">\u00D7</i>` : ""}</button>`).join("");
+  OPEN_TABS = OPEN_TABS.filter((k) => !isLayoutTab(k) || !LAYOUTS || layoutById(k.slice(2)));
+  const list = OPEN_TABS.includes(S.tab) || (!PAGE_LABEL[S.tab] && !isLayoutTab(S.tab) && S.tab !== "templates") ? OPEN_TABS : OPEN_TABS.concat(S.tab);
+  $("#tabs").innerHTML = list.map((k) => `<button data-tab="${esc(k)}" class="${k === S.tab ? "active" : ""} ${isLayoutTab(k) ? "is-layout" : ""}" title="${esc(tabLabel(k))}${isLayoutTab(k) ? " (right click for layout options)" : ""}">${tabIcon(k)}<span>${esc(tabLabel(k))}</span>${isLayoutTab(k) && k === S.tab ? `<i class="tab-more" data-more="${esc(k.slice(2))}" title="Layout options" aria-label="Layout options">\u22EE</i>` : ""}${list.length > 1 ? `<i class="tab-x" data-close="${esc(k)}" title="Close tab" aria-label="Close tab">\u00D7</i>` : ""}</button>`).join("");
+  $("#addWidget").hidden = !isLayoutTab(S.tab);
+  $$("#tabs button[data-tab]").forEach((b) => b.addEventListener("contextmenu", (e) => { if (isLayoutTab(b.dataset.tab)) { e.preventDefault(); layoutMenu(b, b.dataset.tab.slice(2)); } }));
   $$("#tabs button[data-tab]").forEach((b) => b.addEventListener("click", (e) => {
+    if (e.target.closest("[data-more]")) { e.stopPropagation(); layoutMenu(e.target.closest("[data-more]"), e.target.closest("[data-more]").dataset.more); return; }
     if (e.target.closest("[data-close]")) {
       e.stopPropagation();
       const k = e.target.closest("[data-close]").dataset.close;
@@ -510,10 +517,11 @@ function drawTabs() {
   if (act) act.scrollIntoView({ block: "nearest", inline: "nearest" });
 }
 function drawPageMenu() {
-  $("#pageMenu").innerHTML = PAGE_GROUPS.map(([g, pages]) => `<div class="pm-sec"><div class="pm-h">${esc(g)}</div>${pages.map(([k, l]) => `<button data-open="${k}">${pageIcon(k)}<span>${esc(l)}</span>${OPEN_TABS.includes(k) ? `<i class="pm-on">Open</i>` : ""}</button>`).join("")}</div>`).join("");
+  const lays = (LAYOUTS || []).map((L) => `<button data-open="L:${esc(L.id)}">${pageIcon(L.icon || "market")}<span>${esc(L.name)}</span>${OPEN_TABS.includes("L:" + L.id) ? `<i class="pm-on">Open</i>` : ""}</button>`).join("");
+  $("#pageMenu").innerHTML = `<div class="pm-sec"><div class="pm-h">Layouts</div>${lays}<button data-open="templates" class="pm-new"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><span>Start from a template</span></button></div>` + PAGE_GROUPS.map(([g, pages]) => `<div class="pm-sec"><div class="pm-h">${esc(g)}</div>${pages.map(([k, l]) => `<button data-open="${k}">${pageIcon(k)}<span>${esc(l)}</span>${OPEN_TABS.includes(k) ? `<i class="pm-on">Open</i>` : ""}</button>`).join("")}</div>`).join("");
   $$("#pageMenu [data-open]").forEach((b) => (b.onclick = () => {
     const k = b.dataset.open;
-    if (!OPEN_TABS.includes(k)) { OPEN_TABS.push(k); store.set("openTabs", OPEN_TABS); }
+    if (!OPEN_TABS.includes(k) && k !== "templates") { OPEN_TABS.push(k); store.set("openTabs", OPEN_TABS); }
     $("#pageMenu").hidden = true;
     showTab(k);
   }));
@@ -526,10 +534,14 @@ function showTab(name) {
   S.tab = name;
   try { sessionStorage.setItem("geco.tab", name); } catch (e) { /* storage unavailable */ }
   drawTabs();
-  $$(".tab").forEach((s) => (s.hidden = s.id !== "tab-" + name));
+  closePop();
+  const sec = isLayoutTab(name) ? "layout" : name;
+  $$(".tab").forEach((s) => (s.hidden = s.id !== "tab-" + sec));
+  document.body.classList.toggle("on-layout", isLayoutTab(name));
   renderTab(name);
 }
 function renderTab(name, soft) {
+  if (isLayoutTab(name)) { if (soft) refreshLayout(); else renderLayout($("#tab-layout"), name.slice(2)); return; }
   const fn = renderers[name];
   if (fn) fn($("#tab-" + name), soft);
 }
@@ -1411,20 +1423,56 @@ function pfmt(v) { if (v == null) return "-"; const a = Math.abs(v); return a >=
 // bars: [{t,o,h,l,c,hv,lv}]. opts: type ("candle" | "line"), ind (Set of "sma", "ema", "bb",
 // "rsi", "vol", "events"), compare ([{name, color, pts:[{t,v}]}] shown as % change with the
 // item on one axis), lines ([price]), events ([{t, title, kind}]), onPick(price) for drawing.
+function vwapArr(bars) {
+  let pv = 0, v = 0;
+  return bars.map((b) => { const vol = (b.hv || 0) + (b.lv || 0); pv += ((b.h + b.l + b.c) / 3) * vol; v += vol; return v ? pv / v : null; });
+}
+function macdArr(v) {
+  const e12 = emaArr(v, 12), e26 = emaArr(v, 26);
+  const line = v.map((_, i) => (e12[i] != null && e26[i] != null ? e12[i] - e26[i] : null));
+  const idx = line.map((x, i) => (x == null ? null : i)).filter((i) => i != null);
+  const sig = new Array(v.length).fill(null);
+  const e9 = emaArr(idx.map((i) => line[i]), 9);
+  idx.forEach((i, k) => { sig[i] = e9[k]; });
+  return { line, sig, hist: line.map((x, i) => (x != null && sig[i] != null ? x - sig[i] : null)) };
+}
+const FIB = [[0, "#9b8cff"], [0.236, "#8f7dff"], [0.382, "#6d7bff"], [0.5, "#ff5a86"], [0.618, "#ff9f1c"], [0.786, "#c8ef3b"], [1, "#2fbf71"]];
+
+// Legend style chart. bars: [{t,o,h,l,c,hv,lv}]. opts:
+//   type "candle" | "line"; ind Set of "sma", "ema", "bb", "vwap", "rsi", "macd", "vol", "events"
+//   compare [{name, color, pts:[{t,v}]}] (switches to % change on one axis)
+//   levels [{price, label, kind: "buy" | "sell" | "cost" | "target" | "line"}] drawn as labeled lines
+//   drawings [{type: "trend" | "rect" | "hline" | "fib", t1, p1, t2, p2}] in time and price
+//   tool (the drawing tool in use) with onDraw(d); onPlus(price) for the axis "+" button
+//   events [{t, title, kind, upcoming}]; onEvent(title)
 function tradingChart(host, bars, opts = {}) {
   const ind = opts.ind || new Set();
   if (!bars.length) { host.innerHTML = `<div class="empty">${esc(opts.empty || "No trades saved for this range yet.")}</div>`; return; }
-  const W = Math.max(360, host.clientWidth || 800);
-  const showVol = ind.has("vol"), showRsi = ind.has("rsi");
-  const padL = 8, padR = 64, padT = 22, gap = 8, padB = 22;
-  const H1 = opts.height || 340, H2 = showVol ? 72 : 0, H3 = showRsi ? 72 : 0;
-  const H = padT + H1 + (H2 ? gap + H2 : 0) + (H3 ? gap + H3 : 0) + padB;
+  const W = Math.max(300, host.clientWidth || 800);
+  const showRsi = ind.has("rsi"), showMacd = ind.has("macd"), showVol = ind.has("vol");
+  const padL = 6, padR = 66, padT = 12, gap = 8, padB = 24;
+  const H1 = opts.height || 340, H3 = showRsi ? 64 : 0, H4 = showMacd ? 64 : 0;
+  const H = padT + H1 + (H3 ? gap + H3 : 0) + (H4 ? gap + H4 : 0) + padB;
   const n = bars.length, plotW = W - padL - padR, slot = plotW / n;
   const xi = (i) => padL + slot * (i + 0.5);
+  // Time to x, interpolated between bars (drawings keep their place across timeframes).
+  const tx = (t) => {
+    if (n === 1) return xi(0);
+    const step = (bars[n - 1].t - bars[0].t) / (n - 1) || 1;
+    if (t <= bars[0].t) return xi(0) + ((t - bars[0].t) / step) * slot;
+    if (t >= bars[n - 1].t) return xi(n - 1) + ((t - bars[n - 1].t) / step) * slot;
+    let lo = 0, hi = n - 1;
+    while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (bars[mid].t <= t) lo = mid; else hi = mid; }
+    return xi(lo) + ((t - bars[lo].t) / ((bars[hi].t - bars[lo].t) || 1)) * slot;
+  };
+  const xt = (x) => {  // x back to time
+    const f = (x - padL) / slot - 0.5, i = Math.max(0, Math.min(n - 1, Math.floor(f)));
+    const j = Math.min(n - 1, i + 1), frac = Math.max(0, Math.min(1, f - i));
+    return Math.round(bars[i].t + (bars[j].t - bars[i].t) * frac);
+  };
   const closes = bars.map((b) => b.c);
   const cmp = (opts.compare || []).filter((s) => s.pts && s.pts.length > 1);
   const pctMode = cmp.length > 0;
-  // In compare mode everything is % change from the first bar, on one axis.
   const base = closes[0];
   const conv = (v) => (pctMode ? v / base - 1 : v);
   const cmpSeries = cmp.map((s) => {
@@ -1433,132 +1481,214 @@ function tradingChart(host, bars, opts = {}) {
   });
   const sma = ind.has("sma") ? smaArr(closes, 20) : null, ema = ind.has("ema") ? emaArr(closes, 50) : null;
   const bb = ind.has("bb") ? bollArr(closes) : null, rsi = showRsi ? rsiArr(closes) : null;
+  const vwap = ind.has("vwap") ? vwapArr(bars) : null, macd = showMacd ? macdArr(closes) : null;
   let lo = Infinity, hi = -Infinity;
   const see = (v) => { if (v != null && isFinite(v)) { lo = Math.min(lo, v); hi = Math.max(hi, v); } };
-  bars.forEach((b, i) => {
-    if (pctMode) see(conv(b.c)); else { see(b.l); see(b.h); }
-    if (!pctMode && bb && bb[i]) { see(bb[i].up); see(bb[i].lo); }
-  });
+  bars.forEach((b, i) => { if (pctMode) see(conv(b.c)); else { see(b.l); see(b.h); } if (!pctMode && bb && bb[i]) { see(bb[i].up); see(bb[i].lo); } });
   cmpSeries.forEach((s) => s.vals.forEach(see));
-  if (!pctMode) (opts.lines || []).forEach((p) => { if (p > lo * 0.8 && p < hi * 1.2) see(p); });
-  const padY = (hi - lo) * 0.06 || Math.abs(hi) * 0.02 || 1; lo -= padY; hi += padY;
-  const ticks = niceTicks(lo, hi, 5); lo = ticks[0]; hi = ticks[ticks.length - 1];
+  const levels = pctMode ? [] : (opts.levels || []).filter((l) => l.price);
+  levels.forEach((l) => { if (l.price > lo * 0.85 && l.price < hi * 1.15) see(l.price); });
+  // Volume sits in the bottom fifth of the price pane, under the candles.
+  const volH = showVol && !pctMode ? Math.min(H1 * 0.2, 90) : 0;
+  const span0 = (hi - lo) || Math.abs(hi) * 0.02 || 1;
+  lo -= span0 * 0.05 + (volH ? span0 * 0.28 * (volH / (H1 * 0.2)) : 0); hi += span0 * 0.06;
+  const ticks = niceTicks(lo, hi, 6); lo = ticks[0]; hi = ticks[ticks.length - 1];
   const y = (v) => padT + H1 * (1 - (v - lo) / (hi - lo || 1));
+  const py = (yy) => lo + (hi - lo) * (1 - (yy - padT) / H1);
   const yfmt = pctMode ? (v) => (v > 0 ? "+" : "") + pct(v, Math.abs(hi - lo) < 0.1 ? 1 : 0) : pfmt;
-  const volTop = padT + H1 + gap, volBot = volTop + H2;
   const vmax = Math.max(1, ...bars.map((b) => b.hv + b.lv));
-  const rsiTop = (H2 ? volBot : padT + H1) + gap, rsiBot = rsiTop + H3;
+  const rsiTop = padT + H1 + gap, macdTop = rsiTop + (H3 ? H3 + gap : 0);
   const ry = (v) => rsiTop + H3 * (1 - v / 100);
-  const bw = Math.max(1, Math.min(14, slot * 0.7));
+  const bw = Math.max(1, Math.min(12, slot * 0.66));
   const line = (vals, f = (v) => v) => { let d = "", pen = false; vals.forEach((v, i) => { if (v == null) { pen = false; return; } d += (pen ? "L" : "M") + xi(i).toFixed(1) + "," + y(f(v)).toFixed(1); pen = true; }); return d; };
   let body = "";
+  if (volH) {
+    body += bars.map((b, i) => { const v = b.hv + b.lv; if (!v) return ""; const h = (v / vmax) * volH, up = b.c >= b.o; return `<rect class="vb ${up ? "up" : "down"}" x="${(xi(i) - bw / 2).toFixed(1)}" y="${(padT + H1 - h).toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}"/>`; }).join("");
+  }
   if (!pctMode && bb) {
     const up = [], dn = [];
     bb.forEach((b, i) => { if (b) { up.push([xi(i), y(b.up)]); dn.push([xi(i), y(b.lo)]); } });
     if (up.length > 1) body += `<path class="bb-band" d="M${up.map((p) => p.join(",")).join("L")}L${dn.reverse().map((p) => p.join(",")).join("L")}Z"/>`;
   }
   if (pctMode || opts.type === "line") {
-    const upDay = closes[closes.length - 1] >= closes[0];
+    const upDay = closes[n - 1] >= closes[0];
     body += `<path class="price-line ${upDay ? "up" : "down"}" d="${line(closes, conv)}"/>`;
   } else {
     body += bars.map((b, i) => {
       const up = b.c >= b.o, x = xi(i), yo = y(b.o), yc = y(b.c), top = Math.min(yo, yc), h = Math.max(1, Math.abs(yc - yo));
-      // Up candles are hollow and down candles filled, so direction never relies on color alone.
       return `<line class="wick ${up ? "up" : "down"}" x1="${x}" x2="${x}" y1="${y(b.h)}" y2="${y(b.l)}"/><rect class="candle ${up ? "up" : "down"}" x="${(x - bw / 2).toFixed(1)}" y="${top.toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}"/>`;
     }).join("");
   }
   if (!pctMode && sma) body += `<path class="ov ov1" d="${line(sma)}"/>`;
   if (!pctMode && ema) body += `<path class="ov ov2" d="${line(ema)}"/>`;
+  if (!pctMode && vwap) body += `<path class="ov ov4" d="${line(vwap)}"/>`;
   cmpSeries.forEach((s, k) => { body += `<path class="cmp" style="stroke:${s.color}" d="${line(s.vals)}"${k ? ` stroke-dasharray="5 4"` : ""}/>`; });
   if (pctMode) body += `<line class="base" x1="${padL}" x2="${W - padR}" y1="${y(0)}" y2="${y(0)}"/>`;
-  if (!pctMode) (opts.lines || []).forEach((p, k) => { if (p >= lo && p <= hi) body += `<line class="pline" x1="${padL}" x2="${W - padR}" y1="${y(p)}" y2="${y(p)}"/><rect class="pl-tag" x="${W - padR + 2}" y="${y(p) - 8}" width="${padR - 4}" height="16" rx="3"/><text class="pl-txt" x="${W - padR + 6}" y="${y(p) + 4}">${pfmt(p)}</text>`; });
-  // Last price marker on the axis.
+  // Drawings (time and price coordinates).
+  let draw = "";
+  if (!pctMode) (opts.drawings || []).forEach((d, k) => {
+    const x1 = tx(d.t1), y1 = y(d.p1), x2 = d.t2 != null ? tx(d.t2) : x1, y2 = d.p2 != null ? y(d.p2) : y1;
+    if (d.type === "hline") draw += `<g class="dr" data-dk="${k}"><line class="dr-line" x1="${padL}" x2="${W - padR}" y1="${y1}" y2="${y1}"/><rect class="pl-tag" x="${W - padR + 2}" y="${y1 - 8}" width="${padR - 4}" height="16" rx="3"/><text class="pl-txt" x="${W - padR + 6}" y="${y1 + 4}">${pfmt(d.p1)}</text></g>`;
+    else if (d.type === "trend") draw += `<g class="dr" data-dk="${k}"><line class="dr-line" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"/><circle class="dr-pt" cx="${x1}" cy="${y1}" r="4"/><circle class="dr-pt" cx="${x2}" cy="${y2}" r="4"/></g>`;
+    else if (d.type === "rect") draw += `<g class="dr" data-dk="${k}"><rect class="dr-rect" x="${Math.min(x1, x2)}" y="${Math.min(y1, y2)}" width="${Math.abs(x2 - x1)}" height="${Math.abs(y2 - y1)}"/></g>`;
+    else if (d.type === "fib") {
+      const xa = Math.min(x1, x2), xb = Math.max(x1, x2);
+      draw += `<g class="dr" data-dk="${k}">` + FIB.map(([f, c], j) => {
+        const p = d.p2 + (d.p1 - d.p2) * f, yy = y(p);
+        const next = FIB[j + 1] ? y(d.p2 + (d.p1 - d.p2) * FIB[j + 1][0]) : yy;
+        return `<rect x="${xa}" y="${Math.min(yy, next)}" width="${xb - xa}" height="${Math.abs(next - yy)}" style="fill:${c};opacity:.09"/><line x1="${xa}" x2="${xb}" y1="${yy}" y2="${yy}" style="stroke:${c}"/><text x="${xa - 4}" y="${yy + 4}" text-anchor="end" style="fill:${c}">${f.toFixed(3)} ${pfmt(p)}</text>`;
+      }).join("") + `<line class="dr-line fib" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"/></g>`;
+    }
+  });
+  // Your orders, average cost and targets on the chart ("trade on the chart").
+  let lv = "";
+  levels.forEach((l) => {
+    if (l.price < lo || l.price > hi) return;
+    const yy = y(l.price);
+    lv += `<g class="lvl ${l.kind || "line"}"><line x1="${padL}" x2="${W - padR}" y1="${yy}" y2="${yy}"/><foreignObject x="${W - padR - 250}" y="${yy - 11}" width="246" height="22"><div class="lvl-tag ${l.kind || "line"}" xmlns="http://www.w3.org/1999/xhtml"><span>${esc(l.label)}</span></div></foreignObject><rect class="lvl-price" x="${W - padR + 2}" y="${yy - 8}" width="${padR - 4}" height="16" rx="3"/><text class="lvl-ptxt" x="${W - padR + 6}" y="${yy + 4}">${pfmt(l.price)}</text></g>`;
+  });
+  // Last price on the axis.
   const lastV = conv(closes[n - 1]);
   const lastUp = closes[n - 1] >= (n > 1 ? closes[n - 2] : closes[0]);
-  body += `<line class="last-line" x1="${padL}" x2="${W - padR}" y1="${y(lastV)}" y2="${y(lastV)}"/><rect class="last-tag ${lastUp ? "up" : "down"}" x="${W - padR + 2}" y="${y(lastV) - 8}" width="${padR - 4}" height="16" rx="3"/><text class="last-txt ${lastUp ? "up" : "down"}" x="${W - padR + 6}" y="${y(lastV) + 4}">${esc(yfmt(lastV))}</text>`;
-  // Volume: instant buys and instant sells side by side in each slot.
-  let vol = "";
-  if (H2) {
-    const half = Math.max(1, bw / 2 - 0.5);
-    vol = bars.map((b, i) => {
-      const x = xi(i), hb = (b.hv / vmax) * H2, hs = (b.lv / vmax) * H2;
-      return `${hb ? `<rect class="vb up" x="${(x - half - 0.5).toFixed(1)}" y="${(volBot - hb).toFixed(1)}" width="${half.toFixed(1)}" height="${hb.toFixed(1)}"/>` : ""}${hs ? `<rect class="vb down" x="${(x + 0.5).toFixed(1)}" y="${(volBot - hs).toFixed(1)}" width="${half.toFixed(1)}" height="${hs.toFixed(1)}"/>` : ""}`;
-    }).join("") + `<line class="axis" x1="${padL}" x2="${W - padR}" y1="${volBot}" y2="${volBot}"/><text x="${W - padR + 6}" y="${volTop + 10}">${short(vmax)}</text><text class="pane-lbl" x="${padL + 4}" y="${volTop + 10}">Volume: instant buys | instant sells</text>`;
-  }
+  body += `<line class="last-line" x1="${padL}" x2="${W - padR}" y1="${y(lastV)}" y2="${y(lastV)}"/>`;
+  const lastTag = `<rect class="last-tag ${lastUp ? "up" : "down"}" x="${W - padR + 2}" y="${y(lastV) - 8}" width="${padR - 4}" height="16" rx="3"/><text class="last-txt ${lastUp ? "up" : "down"}" x="${W - padR + 6}" y="${y(lastV) + 4}">${esc(yfmt(lastV))}</text>`;
   let rsiSvg = "";
   if (H3) {
-    rsiSvg = `<rect class="rsi-zone" x="${padL}" y="${ry(70)}" width="${plotW}" height="${ry(30) - ry(70)}"/>
-      <line class="grid" x1="${padL}" x2="${W - padR}" y1="${ry(70)}" y2="${ry(70)}"/><line class="grid" x1="${padL}" x2="${W - padR}" y1="${ry(30)}" y2="${ry(30)}"/>
+    rsiSvg = `<rect class="rsi-zone" x="${padL}" y="${ry(70)}" width="${plotW}" height="${ry(30) - ry(70)}"/><line class="grid" x1="${padL}" x2="${W - padR}" y1="${ry(70)}" y2="${ry(70)}"/><line class="grid" x1="${padL}" x2="${W - padR}" y1="${ry(30)}" y2="${ry(30)}"/>
       <text x="${W - padR + 6}" y="${ry(70) + 4}">70</text><text x="${W - padR + 6}" y="${ry(30) + 4}">30</text>
-      <path class="ov ov3" d="${rsi.map((v, i) => v == null ? "" : (i && rsi[i - 1] != null ? "L" : "M") + xi(i).toFixed(1) + "," + ry(v).toFixed(1)).join("")}"/>
-      <text class="pane-lbl" x="${padL + 4}" y="${rsiTop + 10}">RSI 14</text>`;
+      <path class="ov ov3" d="${rsi.map((v, i) => v == null ? "" : (i && rsi[i - 1] != null ? "L" : "M") + xi(i).toFixed(1) + "," + ry(v).toFixed(1)).join("")}"/><text class="pane-lbl" x="${padL + 4}" y="${rsiTop + 10}">RSI 14</text>`;
   }
-  // News flags along the bottom of the price pane.
+  let macdSvg = "";
+  if (H4) {
+    const vals = macd.line.concat(macd.sig, macd.hist).filter((v) => v != null);
+    const m = Math.max(1e-9, ...vals.map(Math.abs));
+    const my = (v) => macdTop + H4 / 2 - (v / m) * (H4 / 2 - 2);
+    macdSvg = `<line class="grid" x1="${padL}" x2="${W - padR}" y1="${my(0)}" y2="${my(0)}"/>` + macd.hist.map((v, i) => v == null ? "" : `<rect class="vb ${v >= 0 ? "up" : "down"}" x="${(xi(i) - bw / 2).toFixed(1)}" y="${Math.min(my(0), my(v)).toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.abs(my(v) - my(0)).toFixed(1)}"/>`).join("")
+      + `<path class="ov ov2" d="${macd.line.map((v, i) => v == null ? "" : (i && macd.line[i - 1] != null ? "L" : "M") + xi(i).toFixed(1) + "," + my(v).toFixed(1)).join("")}"/><path class="ov ov3" d="${macd.sig.map((v, i) => v == null ? "" : (i && macd.sig[i - 1] != null ? "L" : "M") + xi(i).toFixed(1) + "," + my(v).toFixed(1)).join("")}"/><text class="pane-lbl" x="${padL + 4}" y="${macdTop + 10}">MACD 12 26 9</text>`;
+  }
   let flags = "";
   if (ind.has("events")) {
     (opts.events || []).forEach((ev) => {
       if (ev.t < bars[0].t || ev.t > bars[n - 1].t + 86400) return;
-      let i = 0; while (i < n - 1 && bars[i + 1].t <= ev.t) i++;
-      const x = xi(i);
+      const x = tx(ev.t);
       flags += `<g class="flag ${ev.upcoming ? "up" : ""}" data-ev="${esc(ev.title)}" data-t="${ev.t}" data-k="${esc(ev.kind || "")}"><line x1="${x}" x2="${x}" y1="${padT}" y2="${padT + H1}"/><circle cx="${x}" cy="${padT + H1 - 7}" r="6"/><text x="${x}" y="${padT + H1 - 4}" text-anchor="middle">${ev.upcoming ? "A" : "U"}</text></g>`;
     });
   }
-  const span = bars[n - 1].t - bars[0].t, nx = Math.max(2, Math.min(7, Math.floor(plotW / 110)));
-  const xt = []; for (let k = 0; k <= nx; k++) xt.push(Math.round((n - 1) * k / nx));
+  const span = bars[n - 1].t - bars[0].t, nx = Math.max(2, Math.min(8, Math.floor(plotW / 110)));
+  const xtk = []; for (let k = 0; k <= nx; k++) xtk.push(Math.round((n - 1) * k / nx));
   const legend = [];
   if (pctMode) { legend.push([`var(--pos)`, opts.name || "This item"]); cmpSeries.forEach((s) => legend.push([s.color, s.name])); }
-  else { if (sma) legend.push(["var(--series-2)", "SMA 20"]); if (ema) legend.push(["var(--series-3)", "EMA 50"]); if (bb) legend.push(["var(--muted)", "Bollinger 20, 2"]); }
-  host.innerHTML = `<div class="tc-read" aria-live="off"></div>${legend.length ? `<div class="legend-inline tc-legend">${legend.map(([c, l]) => `<span><i style="background:${c}"></i>${esc(l)}</span>`).join("")}</div>` : ""}
+  else { if (sma) legend.push(["var(--series-2)", "SMA 20"]); if (ema) legend.push(["var(--series-3)", "EMA 50"]); if (vwap) legend.push(["#e0a526", "VWAP"]); if (bb) legend.push(["var(--muted)", "Bollinger 20, 2"]); }
+  const drawing = !!opts.tool;
+  host.innerHTML = `${opts.noReadout || opts.readoutEl ? "" : `<div class="tc-read" aria-live="off"></div>`}${legend.length ? `<div class="legend-inline tc-legend">${legend.map(([c, l]) => `<span><i style="background:${c}"></i>${esc(l)}</span>`).join("")}</div>` : ""}
     <svg class="chart tchart" viewBox="0 0 ${W} ${H}" height="${H}" role="img" aria-label="${esc(opts.aria || "Price chart")}">
     ${ticks.map((t) => `<line class="grid" x1="${padL}" x2="${W - padR}" y1="${y(t)}" y2="${y(t)}"/><text x="${W - padR + 6}" y="${y(t) + 4}">${esc(yfmt(t))}</text>`).join("")}
-    ${body}${flags}${vol}${rsiSvg}
-    ${xt.map((i, k) => `<text x="${xi(i)}" y="${H - 5}" text-anchor="${k === 0 ? "start" : k === nx ? "end" : "middle"}">${axisTime(bars[i].t, span)}</text>`).join("")}
-    <g class="hover" visibility="hidden"><line class="xhair" y1="${padT}" y2="${H - padB}"/><line class="yhair" x1="${padL}" x2="${W - padR}"/><rect class="yh-tag" x="${W - padR + 2}" width="${padR - 4}" height="16" rx="3"/><text class="yh-txt" x="${W - padR + 6}"></text></g>
-    <rect x="${padL}" y="${padT}" width="${plotW}" height="${H - padT - padB}" fill="transparent" class="hit ${opts.drawing ? "drawing" : ""}"/>
+    ${body}${draw}${flags}${lv}${lastTag}${rsiSvg}${macdSvg}
+    ${xtk.map((i, k) => `<text x="${xi(i)}" y="${H - 6}" text-anchor="${k === 0 ? "start" : k === nx ? "end" : "middle"}">${axisTime(bars[i].t, span)}</text>`).join("")}
+    <g class="hover" visibility="hidden"><line class="xhair" y1="${padT}" y2="${H - padB}"/><line class="yhair" x1="${padL}" x2="${W - padR}"/>
+      <rect class="yh-tag" x="${W - padR + 2}" width="${padR - 4}" height="16" rx="3"/><text class="yh-txt" x="${W - padR + 6}"></text>
+      ${opts.onPlus && !pctMode ? `<g class="plus-btn"><rect x="${W - padR - 24}" width="20" height="18" rx="4"/><text x="${W - padR - 14}" text-anchor="middle">+</text></g>` : ""}
+      <rect class="xh-tag" y="${H - padB + 3}" height="18" rx="4"/><text class="xh-txt" y="${H - padB + 16}" text-anchor="middle"></text></g>
+    <line class="draft" visibility="hidden"/><rect class="draft-rect" visibility="hidden"/>
+    <rect x="${padL}" y="${padT}" width="${plotW}" height="${H - padT - padB}" fill="transparent" class="hit ${drawing ? "drawing" : ""}"/>
   </svg>`;
-  const svg = $("svg", host), g = $(".hover", svg), read = $(".tc-read", host);
+  const svg = $("svg", host), g = $(".hover", svg), read = opts.readoutEl || $(".tc-read", host);
   const readout = (i) => {
-    const b = bars[i];
-    const chg = b.c / b.o - 1;
-    let s = `<span class="muted">${esc(fmtTime(b.t, true))}</span>`;
-    if (pctMode) s += ` <b>${esc(opts.name || "Item")}</b> <span class="${signCls(conv(b.c))}">${yfmt(conv(b.c))}</span>` + cmpSeries.map((c) => ` <b>${esc(c.name)}</b> <span class="${signCls(c.vals[i])}">${c.vals[i] == null ? "-" : yfmt(c.vals[i])}</span>`).join("");
-    else s += ` O <b>${pfmt(b.o)}</b> H <b>${pfmt(b.h)}</b> L <b>${pfmt(b.l)}</b> C <b>${pfmt(b.c)}</b> <span class="${signCls(chg)}">${sgnPct(chg, 2)}</span>`;
-    s += ` <span class="muted">Buys</span> ${short(b.hv)} <span class="muted">Sells</span> ${short(b.lv)}`;
-    if (sma && sma[i] != null && !pctMode) s += ` <span class="muted">SMA</span> ${pfmt(sma[i])}`;
-    if (ema && ema[i] != null && !pctMode) s += ` <span class="muted">EMA</span> ${pfmt(ema[i])}`;
+    if (!read) return;
+    const b = bars[i], up = b.c >= b.o, cls = up ? "pos" : "neg";
+    let s = "";
+    if (pctMode) s = `<span class="muted">${esc(fmtTime(b.t, true))}</span> <b>${esc(opts.name || "Item")}</b> <span class="${signCls(conv(b.c))}">${yfmt(conv(b.c))}</span>` + cmpSeries.map((c) => ` <b>${esc(c.name)}</b> <span class="${signCls(c.vals[i])}">${c.vals[i] == null ? "-" : yfmt(c.vals[i])}</span>`).join("");
+    else s = `<b>O</b> <span class="${cls}">${pfmt(b.o)}</span> <b>H</b> <span class="${cls}">${pfmt(b.h)}</span> <b>L</b> <span class="${cls}">${pfmt(b.l)}</span> <b>C</b> <span class="${cls}">${pfmt(b.c)}</span> <b>V</b> <span class="${cls}">${short(b.hv + b.lv)}</span>`;
     if (rsi && rsi[i] != null) s += ` <span class="muted">RSI</span> ${rsi[i].toFixed(0)}`;
     read.innerHTML = s;
   };
   readout(n - 1);
-  const hit = $(".hit", svg);
+  const hit = $(".hit", svg), draft = $(".draft", svg), draftRect = $(".draft-rect", svg);
   const pos = (e) => { const r = svg.getBoundingClientRect(); return [((e.clientX - r.left) / r.width) * W, ((e.clientY - r.top) / r.height) * H]; };
+  let pending = null;  // first click of a two point drawing
+  let hoverPrice = null;
   hit.addEventListener("mousemove", (e) => {
     const [mx, my] = pos(e);
     const i = Math.max(0, Math.min(n - 1, Math.floor((mx - padL) / slot)));
     g.setAttribute("visibility", "visible");
-    $(".xhair", g).setAttribute("x1", xi(i)); $(".xhair", g).setAttribute("x2", xi(i));
+    $(".xhair", g).setAttribute("x1", mx); $(".xhair", g).setAttribute("x2", mx);
     const inPrice = my >= padT && my <= padT + H1;
-    $(".yhair", g).style.display = $(".yh-tag", g).style.display = $(".yh-txt", g).style.display = inPrice ? "" : "none";
+    ["yhair", "yh-tag", "yh-txt"].forEach((c) => ($("." + c, g).style.display = inPrice ? "" : "none"));
+    const pb = $(".plus-btn", g); if (pb) pb.style.display = inPrice ? "" : "none";
     if (inPrice) {
+      hoverPrice = py(my);
       $(".yhair", g).setAttribute("y1", my); $(".yhair", g).setAttribute("y2", my);
       $(".yh-tag", g).setAttribute("y", my - 8); $(".yh-txt", g).setAttribute("y", my + 4);
-      $(".yh-txt", g).textContent = yfmt(lo + (hi - lo) * (1 - (my - padT) / H1));
+      $(".yh-txt", g).textContent = yfmt(hoverPrice);
+      if (pb) { $("rect", pb).setAttribute("y", my - 9); $("text", pb).setAttribute("y", my + 4); const hot = !opts.tool && mx >= W - padR - 26; pb.classList.toggle("hot", hot); hit.style.cursor = hot ? "pointer" : ""; }
+    }
+    const tlabel = fmtTime(xt(mx), true), tw = tlabel.length * 6.4 + 14;
+    $(".xh-tag", g).setAttribute("x", Math.max(padL, Math.min(W - padR - tw, mx - tw / 2))); $(".xh-tag", g).setAttribute("width", tw);
+    $(".xh-txt", g).setAttribute("x", Math.max(padL + tw / 2, Math.min(W - padR - tw / 2, mx))); $(".xh-txt", g).textContent = tlabel;
+    if (pending && (opts.tool === "trend" || opts.tool === "fib")) {
+      draft.setAttribute("visibility", "visible");
+      draft.setAttribute("x1", tx(pending.t)); draft.setAttribute("y1", y(pending.p)); draft.setAttribute("x2", mx); draft.setAttribute("y2", my);
+    }
+    if (pending && opts.tool === "rect") {
+      const x0 = tx(pending.t), y0 = y(pending.p);
+      draftRect.setAttribute("visibility", "visible");
+      draftRect.setAttribute("x", Math.min(x0, mx)); draftRect.setAttribute("y", Math.min(y0, my)); draftRect.setAttribute("width", Math.abs(mx - x0)); draftRect.setAttribute("height", Math.abs(my - y0));
     }
     readout(i);
   });
   hit.addEventListener("mouseleave", () => { g.setAttribute("visibility", "hidden"); readout(n - 1); });
   hit.addEventListener("click", (e) => {
-    if (!opts.drawing || !opts.onPick || pctMode) return;
-    const [, my] = pos(e);
-    if (my < padT || my > padT + H1) return;
-    opts.onPick(Math.round(lo + (hi - lo) * (1 - (my - padT) / H1)));
+    const [mx, my] = pos(e);
+    if (my < padT || my > padT + H1 || pctMode) return;
+    const t = xt(mx), p = py(my);
+    if (!opts.tool && opts.onPlus && hoverPrice != null && mx >= W - padR - 26 && mx <= W - padR - 2) { opts.onPlus(Math.round(hoverPrice)); return; }
+    if (opts.tool && opts.onDraw) {
+      if (opts.tool === "hline") { opts.onDraw({ type: "hline", t1: t, p1: Math.round(p) }); return; }
+      if (!pending) { pending = { t, p }; return; }
+      opts.onDraw({ type: opts.tool, t1: pending.t, p1: Math.round(pending.p), t2: t, p2: Math.round(p) });
+      pending = null;
+    }
   });
+  const pb = $(".plus-btn", g);
+  if (pb) {
+    // The "+" follows the crosshair; the hit layer is above it, so catch the click by position.
+    hit.addEventListener("dblclick", () => { if (hoverPrice != null && opts.onPlus) opts.onPlus(Math.round(hoverPrice)); });
+    pb.addEventListener("click", () => { if (hoverPrice != null) opts.onPlus(Math.round(hoverPrice)); });
+  }
   const tip = $("#tooltip");
   $$(".flag", svg).forEach((f) => {
     f.addEventListener("mousemove", (e) => tipAt(e, `<div class="muted">${esc(fmtTime(+f.dataset.t, true))} · ${esc(f.dataset.k)}</div><b>${esc(f.dataset.ev)}</b>`));
     f.addEventListener("mouseleave", () => (tip.hidden = true));
     f.addEventListener("click", () => opts.onEvent && opts.onEvent(f.dataset.ev));
   });
+  $$(".dr", svg).forEach((el) => el.addEventListener("contextmenu", (e) => { e.preventDefault(); if (opts.onErase) opts.onErase(+el.dataset.dk); }));
+}
+
+// Timeframes and intervals, Legend style: a range, and a bar size that fits it.
+const RANGES = [["1D", 1], ["1W", 7], ["1M", 30], ["3M", 90], ["YTD", null], ["1Y", 365], ["All", 800]];
+const INTERVALS = [["5m", 300], ["15m", 900], ["30m", 1800], ["1h", 3600], ["4h", 14400], ["12h", 43200], ["1D", 86400], ["1W", 604800]];
+function rangeDays(r) {
+  if (r === "YTD") { const now = new Date(); return Math.max(2, Math.ceil((now - new Date(now.getFullYear(), 0, 1)) / 86400000)); }
+  const f = RANGES.find(([k]) => k === r); return f ? f[1] : 30;
+}
+function intervalsFor(r) {
+  const days = rangeDays(r);
+  return INTERVALS.filter(([, s]) => { const bars = days * 86400 / s; return bars >= 12 && bars <= 700 && !(s < 3600 && days > 7); });
+}
+function fitInterval(r, width) {
+  const ok = intervalsFor(r), want = Math.max(20, (width - 80) / 9), days = rangeDays(r);
+  let best = ok[0];
+  ok.forEach((x) => { if (Math.abs(Math.log(days * 86400 / x[1] / want)) < Math.abs(Math.log(days * 86400 / best[1] / want))) best = x; });
+  return best ? best[0] : defaultInterval(r);
+}
+function defaultInterval(r) { const ok = intervalsFor(r); const mid = ok[Math.min(ok.length - 1, Math.floor(ok.length / 2))]; return mid ? mid[0] : "1h"; }
+async function loadBars(id, range, interval) {
+  const days = rangeDays(range);
+  const secs = (INTERVALS.find(([k]) => k === interval) || INTERVALS[3])[1];
+  const res = secs < 3600 && days <= 7 ? "5m" : secs < 86400 && days <= 365 ? "1h" : "1d";
+  let d = await api(`/api/localhistory?id=${id}&res=${res}&days=${days}`);
+  if (res === "1d" && d.data.length < 10) d = await api(`/api/localhistory?id=${id}&res=1h&days=${days}`);
+  return buildBars(d.data, secs);
 }
 
 // Treemap heatmap (squarified). groups: [{name, items: [{id, name, value, chg}]}]. Size is
@@ -1622,30 +1752,17 @@ function treemap(host, groups, opts = {}) {
 }
 
 // Terminal: a trading desk where every panel follows one item ----------------------
-const TM = Object.assign({ id: 4151, tf: "1M", type: "candle", ind: ["vol", "events", "sma"], cmp: "none", cmpId: null, layout: "trade", list: "watch", bottom: "news" }, store.get("tm", {}));
-TM.drawing = false;
-const TF = {
-  "1D": { res: "5m", days: 1, bucket: 900 }, "1W": { res: "1h", days: 7, bucket: 3600 },
-  "1M": { res: "1h", days: 30, bucket: 14400 }, "3M": { res: "1d", days: 90, bucket: 86400 },
-  "1Y": { res: "1d", days: 365, bucket: 86400 }, "2Y": { res: "1d", days: 800, bucket: 3 * 86400 },
-};
-const IND = [["sma", "SMA 20"], ["ema", "EMA 50"], ["bb", "Bollinger"], ["rsi", "RSI"], ["vol", "Volume"], ["events", "News flags"]];
+const TM = Object.assign({ id: 4151, range: "1M", interval: "", type: "candle", ind: ["vol", "events", "sma"], tool: "", cmp: "none", cmpId: null, layout: "trade", list: "watch", bottom: "news" }, store.get("tm", {}));
+if (TM.tf) { TM.range = TM.tf === "2Y" ? "All" : TM.tf; delete TM.tf; }  // older saved state
 let TM_DATA = null, TM_REPORT = null, TM_REQ = 0;
-function saveTM() { const c = Object.assign({}, TM); delete c.drawing; store.set("tm", c); }
-function tmLines(id) { return store.get("tm.lines." + id, []); }
+function saveTM() { store.set("tm", TM); }
 function openTerminal(id) { TM.id = id; saveTM(); closeItem(); showTab("terminal"); }
 
-async function tmHistory(id, tf) {
-  const f = TF[tf];
-  let d = await api(`/api/localhistory?id=${id}&res=${f.res}&days=${f.days}`);
-  if (f.res === "1d" && d.data.length < 10) d = await api(`/api/localhistory?id=${id}&res=1h&days=${f.days}`);  // no daily import yet
-  return buildBars(d.data, f.bucket);
-}
-async function tmCompare(tf) {
-  const f = TF[tf];
+async function tmCompare(range) {
+  const f = { days: rangeDays(range) };
   if (TM.cmp === "market") {
     if (f.days <= 30) {
-      const d = await api(`/api/indices?days=${Math.max(1, Math.ceil(f.days))}`);
+      const d = await cachedApi(`/api/indices?days=${Math.max(1, Math.ceil(f.days))}`, 300000);
       const mk = (d.categories || []).find((c) => c.key === "market");
       return mk ? [{ name: "Market index", color: "var(--series-2)", pts: mk.series }] : [];
     }
@@ -1658,7 +1775,7 @@ async function tmCompare(tf) {
     return [{ name: "Guide price", color: "var(--series-3)", pts: g.series.filter((p) => p.t >= since - 86400) }];
   }
   if (TM.cmp === "item" && TM.cmpId) {
-    const bars = await tmHistory(TM.cmpId, tf);
+    const bars = await loadBars(TM.cmpId, range, TM.interval || defaultInterval(range));
     const nm = (S.byId.get(TM.cmpId) || {}).name || "Item " + TM.cmpId;
     return [{ name: nm, color: "var(--series-3)", pts: bars.map((b) => ({ t: b.t, v: b.c })) }];
   }
@@ -1681,7 +1798,12 @@ function drawTmList(host) {
     : `<div class="empty small">${TM.list === "watch" ? "Star items to build a watchlist." : TM.list === "hold" ? "No holdings yet." : "Nothing here."}</div>`;
   $$(".tm-row", host).forEach((el) => (el.onclick = () => tmSelect(host, +el.dataset.id)));
 }
-function tmSelect(host, id) { TM.id = id; saveTM(); renderers.terminal(host, false); }
+function tmSelect(host, id) {
+  TM.id = id; saveTM();
+  // The Terminal belongs to the blue link group, so linked widgets (and other windows) follow it.
+  LINKS.blue = id; store.set("links", LINKS); if (WS_BC) WS_BC.postMessage({ type: "link", color: "blue", id });
+  renderers.terminal(host, false);
+}
 
 function tmSignalsNow(bars) {
   // Signals on the daily bars right now, named the same way as the indicator report.
@@ -1715,17 +1837,12 @@ renderers.terminal = async function (host, soft) {
       <div class="tm-grid">
         <aside class="tm-left panel"><div class="tm-ph"><span class="link-sq" title="Linked: every panel follows the selected item"></span><div class="seg tm-tabs" id="tmListTabs">${[["watch", "Watch"], ["hold", "Held"], ["gain", "Gainers"], ["lose", "Losers"], ["top", "Top"]].map(([k, l]) => `<button data-k="${k}" class="${TM.list === k ? "on" : ""}">${l}</button>`).join("")}</div></div><div id="tmList" class="tm-list"></div></aside>
         <section class="tm-center panel">
-          <div class="tm-tools"><span class="link-sq" title="Linked: every panel follows the selected item"></span>
-            <div class="seg" id="tmTf">${Object.keys(TF).map((k, i) => `<button data-k="${k}" class="${TM.tf === k ? "on" : ""}" title="Key ${i + 1}">${k}</button>`).join("")}</div>
-            <div class="seg" id="tmType">${[["candle", "Candles"], ["line", "Line"]].map(([k, l]) => `<button data-k="${k}" class="${TM.type === k ? "on" : ""}">${l}</button>`).join("")}</div>
-            <div class="chips tm-ind" id="tmInd">${IND.map(([k, l]) => `<button class="chip ${TM.ind.includes(k) ? "on" : ""}" data-k="${k}">${l}</button>`).join("")}</div>
+          <div class="tm-tools"><span class="link-sq" title="Linked: every panel follows the selected item (blue link group)"></span>
             <label class="tm-cmp">Compare <select class="input" id="tmCmp"><option value="none">None</option><option value="market" ${TM.cmp === "market" ? "selected" : ""}>Market index</option><option value="guide" ${TM.cmp === "guide" ? "selected" : ""}>Guide price</option><option value="item" ${TM.cmp === "item" ? "selected" : ""}>${TM.cmp === "item" && TM.cmpId ? esc((S.byId.get(TM.cmpId) || {}).name || "Item") : "Another item..."}</option></select></label>
-            <button class="btn small ${TM.drawing ? "primary" : ""}" id="tmDraw" title="Click the chart to add a price line (D)">Price line</button>
-            <button class="btn small" id="tmClear" title="Remove this item's price lines">Clear lines</button>
           </div>
           <div id="tmCmpPick" hidden>${pickerField("Compare with", "tmCmpItem", "field")}</div>
           <div id="tmChart" class="tm-chart"></div>
-          <div class="muted small tm-note">Candles are built from the Wiki's average prices per window: the close is the mid price and the wicks reach the average instant-buy and instant-sell prices. Hollow candles closed up, filled closed down.</div>
+          <div class="muted small tm-note">Candles are built from the Wiki's average prices per window: the close is the mid price and the wicks reach the average instant-buy and instant-sell prices. Lime candles closed up, red closed down; the plus on the price axis plans a buy or sell there.</div>
         </section>
         <aside class="tm-right panel" id="tmRight"></aside>
         <section class="tm-bottom panel">
@@ -1733,33 +1850,30 @@ renderers.terminal = async function (host, soft) {
           <div id="tmBottom"></div>
         </section>
       </div>
-      <div class="muted small tm-keys">Keys: / search · J and K move through the list · 1 to 6 timeframe · C candles or line · D price line · W watch · L layout</div>
+      <div class="muted small tm-keys">Keys: / search · J and K move through the list · 1 to 7 range · C candles or line · D price level tool · Esc done drawing · W watch · L layout</div>
     </div>`;
     bindTerminal(host);
   }
   drawTmList(host);
-  let d, bars, cmp;
+  let d;
   try {
-    [d, bars, cmp] = await Promise.all([api("/api/terminal?id=" + TM.id), tmHistory(TM.id, TM.tf), tmCompare(TM.tf)]);
+    d = await cachedApi("/api/terminal?id=" + TM.id, 15000);
   } catch (e) { $("#tmChart", host).innerHTML = `<div class="notice">${esc(e.message)}</div>`; return; }
   if (req !== TM_REQ) return;  // a newer selection is loading
   if (!TM_DATA || !TM_DATA.holdIds) {
     api("/api/networth").then((v) => { TM_DATA = Object.assign(TM_DATA || {}, { holdIds: v.holdings.filter((h) => h.how !== "cash").map((h) => h.id) }); if (TM.list === "hold") drawTmList(host); }).catch(() => {});
   }
-  TM_DATA = Object.assign(TM_DATA || {}, { d, bars });
+  TM_DATA = Object.assign(TM_DATA || {}, { d });
   const m = d.meta, r = d.row || {}, st = d.stats || {};
   const dayChg = r.chg24h;
   $("#tmHead", host).innerHTML = `<img alt="" src="${esc(iconUrl(m.icon))}" onerror="this.style.visibility='hidden'">
     <div><div class="tm-name">${esc(m.name)} ${star(m.id)}</div><div class="muted small">${m.members ? "Members" : "Free to play"} · limit ${gp(m.limit)} · ID ${m.id}</div></div>
     <div class="tm-price"><span class="big">${pfmt(r.high)}</span> <span class="${signCls(dayChg)}">${dayChg == null ? "" : sgnPct(dayChg, 2) + " today"}</span></div>`;
   bindRowClicks($("#tmHead", host));
-  const drawChart = () => tradingChart($("#tmChart", host), bars, {
-    type: TM.type, ind: new Set(TM.ind), compare: cmp, name: m.name, lines: tmLines(TM.id), drawing: TM.drawing,
-    height: TM.layout === "chart" ? 460 : 360,
-    events: (d.news || []).map((n) => ({ t: n.t, title: n.title, kind: n.kindLabel, upcoming: n.upcoming })),
-    onPick: (p) => { const l = tmLines(TM.id); l.push(p); store.set("tm.lines." + TM.id, l); TM.drawing = false; $("#tmDraw", host).classList.remove("primary"); drawChart(); },
+  const drawChart = () => mountChartView($("#tmChart", host), TM, {
+    item: TM.id, save: saveTM, compare: () => tmCompare(TM.range),
+    height: () => (TM.layout === "chart" ? 460 : 360),
     onEvent: () => { TM.bottom = "news"; saveTM(); drawTmBottom(host); },
-    aria: `${m.name} price chart`,
   });
   drawChart();
   TM_DATA.redraw = drawChart;
@@ -1853,7 +1967,7 @@ async function drawTmBottom(host) {
     return;
   }
   if (TM.bottom === "signals") {
-    const daily = TM.tf === "1Y" || TM.tf === "3M" || TM.tf === "2Y" ? TM_DATA.bars : buildBars((await api(`/api/localhistory?id=${TM.id}&res=1d&days=400`)).data, 86400);
+    const daily = buildBars((await api(`/api/localhistory?id=${TM.id}&res=1d&days=400`)).data, 86400);
     const now = tmSignalsNow(daily);
     if (!TM_REPORT || TM_REPORT.running) TM_REPORT = await api("/api/indicators/report").catch(() => null);
     const rep = TM_REPORT && TM_REPORT.signals ? new Map(TM_REPORT.signals.map((s) => [s.key, s])) : new Map();
@@ -1880,15 +1994,10 @@ function bindTerminal(host) {
   makePicker($("#tmCmpItem", host), $("#tmCmpItemList", host), (r) => { TM.cmp = "item"; TM.cmpId = r.id; saveTM(); $("#tmCmpPick", host).hidden = true; renderers.terminal(host, false); });
   $$("#tmLayout button", host).forEach((b) => (b.onclick = () => { TM.layout = b.dataset.k; saveTM(); renderers.terminal(host, false); }));
   $$("#tmListTabs button", host).forEach((b) => (b.onclick = () => { TM.list = b.dataset.k; saveTM(); $$("#tmListTabs button", host).forEach((x) => x.classList.toggle("on", x === b)); drawTmList(host); }));
-  $$("#tmTf button", host).forEach((b) => (b.onclick = () => { TM.tf = b.dataset.k; saveTM(); $$("#tmTf button", host).forEach((x) => x.classList.toggle("on", x === b)); renderers.terminal(host, true); }));
-  $$("#tmType button", host).forEach((b) => (b.onclick = () => { TM.type = b.dataset.k; saveTM(); $$("#tmType button", host).forEach((x) => x.classList.toggle("on", x === b)); if (TM_DATA && TM_DATA.redraw) TM_DATA.redraw(); }));
-  $$("#tmInd button", host).forEach((b) => (b.onclick = () => { const k = b.dataset.k; TM.ind = TM.ind.includes(k) ? TM.ind.filter((x) => x !== k) : TM.ind.concat(k); saveTM(); b.classList.toggle("on"); if (TM_DATA && TM_DATA.redraw) TM_DATA.redraw(); }));
   $("#tmCmp", host).onchange = (e) => {
     if (e.target.value === "item") { $("#tmCmpPick", host).hidden = false; $("#tmCmpItem", host).focus(); return; }
     TM.cmp = e.target.value; saveTM(); renderers.terminal(host, true);
   };
-  $("#tmDraw", host).onclick = () => { TM.drawing = !TM.drawing; $("#tmDraw", host).classList.toggle("primary", TM.drawing); if (TM_DATA && TM_DATA.redraw) TM_DATA.redraw(); };
-  $("#tmClear", host).onclick = () => { store.set("tm.lines." + TM.id, []); if (TM_DATA && TM_DATA.redraw) TM_DATA.redraw(); };
   $$("#tmBottomTabs button", host).forEach((b) => (b.onclick = () => { TM.bottom = b.dataset.k; saveTM(); drawTmBottom(host); }));
 }
 
@@ -1905,10 +2014,11 @@ document.addEventListener("keydown", (e) => {
     tmSelect(host, rows[Math.max(0, Math.min(rows.length - 1, (i < 0 ? -step : i) + step))].id);
     return;
   }
-  const tfs = Object.keys(TF);
-  if (/^[1-6]$/.test(k)) { TM.tf = tfs[+k - 1]; saveTM(); renderers.terminal(host, false); return; }
-  if (k === "c") { TM.type = TM.type === "candle" ? "line" : "candle"; saveTM(); renderers.terminal(host, false); return; }
-  if (k === "d") { $("#tmDraw", host).click(); return; }
+  const redraw = () => (TM_DATA && TM_DATA.redraw ? TM_DATA.redraw() : renderers.terminal(host, false));
+  if (/^[1-7]$/.test(k)) { TM.range = RANGES[+k - 1][0]; if (!intervalsFor(TM.range).some(([x]) => x === TM.interval)) TM.interval = ""; saveTM(); redraw(); return; }
+  if (k === "c") { TM.type = TM.type === "candle" ? "line" : "candle"; saveTM(); redraw(); return; }
+  if (k === "d") { TM.tool = TM.tool === "hline" ? "" : "hline"; saveTM(); redraw(); return; }
+  if (k === "escape" && TM.tool) { TM.tool = ""; saveTM(); redraw(); return; }
   if (k === "w") { toggleWatch(TM.id); return; }
   if (k === "l") { const ls = ["trade", "chart", "research"]; TM.layout = ls[(ls.indexOf(TM.layout) + 1) % 3]; saveTM(); renderers.terminal(host, false); }
 });
@@ -2121,6 +2231,567 @@ function targetTable(rows, item) {
   return `<div class="tscroll"><table>${thead([{ label: "Item" }, { label: "Side" }, { label: "Target", num: 1 }, { label: "Qty", num: 1 }, { label: "Market", num: 1 }, { label: "Away", num: 1 }, { label: "" }, { label: "" }], null)}<tbody>${rows.map((t) => `<tr class="static"><td>${esc(t.name || "")}${t.ladder ? ` <span class="muted small">${esc(t.ladder)}</span>` : ""}</td><td><span class="tag ${t.side === "buy" ? "buy" : "sell"}">${t.side}</span></td><td class="num">${gp(t.price)}</td><td class="num">${t.qty ? gp(t.qty) : "-"}${t.windows > 1 ? ` <span class="muted small">${t.windows} limit windows</span>` : ""}</td><td class="num">${gp(t.market)}</td><td class="num">${t.hit_at ? `<span class="pos">hit</span>` : t.distance == null ? "-" : sgnPct(t.distance, 1)}</td><td class="small muted">${t.netEach ? "nets " + gp(t.netEach) + " each" : ""}</td><td class="num"><button class="btn small danger" data-tdel="${t.tid}">Delete</button></td></tr>`).join("")}</tbody></table></div>`;
 }
 function bindTargetTable(host, after) { $$("[data-tdel]", host).forEach((b) => (b.onclick = async () => { await api("/api/targets?tid=" + b.dataset.tdel, { method: "DELETE" }); after(); })); }
+
+// ===================================================================================
+// Workspaces, the Robinhood Legend way: layouts of widgets you can move, resize, add and
+// remove, linked by color so every widget in a group follows the same item (across
+// layouts and across windows, for a second monitor), started from templates.
+// ===================================================================================
+const COLS = 24, GAPPX = 8, WS_ROWS = 22;
+// Rows stretch so a 22 row layout fills the window, like Legend's full screen layouts.
+function wsRowH() { return Math.max(24, Math.floor((window.innerHeight - 48 - 16 - (WS_ROWS - 1) * GAPPX) / WS_ROWS)); }
+const LINK_COLORS = [["blue", "#3b82f6"], ["red", "#ff4d4a"], ["lime", "#ccff00"], ["purple", "#a78bfa"], ["orange", "#ff9f1c"]];
+let LINKS = store.get("links", {});
+let LAYOUTS = store.get("layouts", null);
+const WS_BC = "BroadcastChannel" in window ? new BroadcastChannel("bankstanding") : null;
+const API_CACHE = new Map();
+function cachedApi(path, ttl = 20000) {
+  const hit = API_CACHE.get(path);
+  if (hit && Date.now() - hit.at < ttl) return hit.p;
+  const p = api(path).catch((e) => { API_CACHE.delete(path); throw e; });
+  API_CACHE.set(path, { at: Date.now(), p });
+  return p;
+}
+function uid() { return Math.random().toString(36).slice(2, 9); }
+function defaultItem() { return (S.rows.slice().sort((a, b) => (b.vol24 || 0) * (b.high || 0) - (a.vol24 || 0) * (a.high || 0))[0] || {}).id || 4151; }
+function saveLayouts(broadcast = true) { store.set("layouts", LAYOUTS); if (broadcast && WS_BC) WS_BC.postMessage({ type: "layouts" }); }
+function layoutById(id) { return (LAYOUTS || []).find((l) => l.id === id); }
+function linkColor(c) { return (LINK_COLORS.find(([k]) => k === c) || [null, "transparent"])[1]; }
+function widgetItem(w) { return (w.link ? LINKS[w.link] : null) || w.item || defaultItem(); }
+function setWidgetItem(w, id) {
+  if (w.link) {
+    LINKS[w.link] = id; store.set("links", LINKS);
+    if (WS_BC) WS_BC.postMessage({ type: "link", color: w.link, id });
+    refreshGroup(w.link);
+  } else { w.item = id; saveLayouts(); refreshWidget(w.id); }
+}
+function refreshGroup(color) { $$(`.wd[data-link="${color}"]`).forEach((el) => refreshWidget(el.dataset.wid)); if (S.tab === "terminal" && color === "blue") { TM.id = LINKS.blue; renderTab("terminal"); } }
+if (WS_BC) WS_BC.onmessage = (e) => {
+  const m = e.data || {};
+  if (m.type === "link") { LINKS[m.color] = m.id; refreshGroup(m.color); }
+  if (m.type === "layouts") { LAYOUTS = store.get("layouts", LAYOUTS); drawTabs(); if (S.tab.startsWith("L:")) renderTab(S.tab); }
+};
+
+// Layout grid ------------------------------------------------------------------------
+function collides(a, b) { return a !== b && a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h; }
+function settle(list, moved) {
+  // Push anything the moved widget now overlaps downward, then float everything up.
+  for (let guard = 0; guard < 200; guard++) {
+    let changed = false;
+    for (const o of list) {
+      if (o === moved) continue;
+      const blocker = list.find((p) => p !== o && collides(o, p) && (p === moved || p.y < o.y || (p.y === o.y && list.indexOf(p) < list.indexOf(o))));
+      if (blocker) { o.y = blocker.y + blocker.h; changed = true; }
+    }
+    if (!changed) break;
+  }
+  list.slice().sort((a, b) => a.y - b.y || a.x - b.x).forEach((w) => {
+    if (w === moved) return;
+    while (w.y > 0 && !list.some((o) => o !== w && collides(Object.assign({}, w, { y: w.y - 1 }), o))) w.y--;
+  });
+}
+// After a drop, a widget that got pushed down moves back up into the widest free span on
+// its old rows (narrowing to fit if needed), so dragging one widget over another swaps them.
+function refill(list, moved, start) {
+  list.forEach((o) => {
+    const st = start.get(o.id);
+    if (o === moved || !st || o.y <= st.y) return;
+    const free = [];
+    for (let c = 0; c < COLS; c++) free.push(!list.some((p) => p !== o && collides({ x: c, y: st.y, w: 1, h: o.h }, p)));
+    let best = null;
+    for (let c = 0; c < COLS;) {
+      if (!free[c]) { c++; continue; }
+      let e = c; while (e < COLS && free[e]) e++;
+      if (!best || e - c > best[1] - best[0]) best = [c, e];
+      c = e;
+    }
+    if (best && best[1] - best[0] >= 3) { o.x = best[0]; o.w = Math.min(st.w, best[1] - best[0]); o.y = st.y; }
+  });
+}
+function placeEl(el, w) { el.style.gridColumn = `${w.x + 1} / span ${w.w}`; el.style.gridRow = `${w.y + 1} / span ${w.h}`; }
+
+const WS_ICONS = {
+  search: "M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16z M21 21l-4.3-4.3",
+  dots: "M12 5h.01 M12 12h.01 M12 19h.01",
+  trend: "M4 20L20 4 M4 20h.01 M20 4h.01", rect: "M4 6h16v12H4z", hline: "M3 12h18 M3 7h18 M3 17h18", fib: "M3 5h18 M3 10h18 M3 14h18 M3 19h18 M5 19L19 5",
+  erase: "M4 7h16 M9 7V4h6v3 M6 7l1 13h10l1-13", func: "M14 4c-2 0-3 1-3.5 4L8 20c-.5 2-1.5 3-3 3 M7 11h8",
+  candles: "M7 3v18 M5 7h4v8H5z M17 3v18 M15 9h4v6h-4z", line: "M3 17l5-6 4 3 9-9",
+};
+const wsIcon = (k, s = 16) => `<svg viewBox="0 0 24 24" width="${s}" height="${s}" aria-hidden="true"><path d="${WS_ICONS[k]}"/></svg>`;
+
+function renderLayout(host, lid) {
+  const L = layoutById(lid);
+  if (!L) { host.innerHTML = `<div class="empty">This layout no longer exists.</div>`; return; }
+  host.innerHTML = `<div class="ws" data-lid="${L.id}"><div class="ws-grid" style="grid-auto-rows:${wsRowH()}px">${L.widgets.map((w) => `<section class="wd" data-wid="${w.id}" data-link="${w.link || ""}">
+      <header class="wd-head"><button class="link-btn" title="Link group: widgets with the same color follow the same item" style="--lc:${linkColor(w.link)}"></button><div class="wd-title"></div><div class="wd-icons"></div><button class="wd-icon wd-menu" title="Widget menu">${wsIcon("dots")}</button></header>
+      <div class="wd-body"></div><div class="wd-resize" title="Drag to resize"></div></section>`).join("")}</div>
+      ${L.widgets.length ? "" : `<div class="ws-empty"><h2>An empty layout</h2><p class="muted">Add widgets with <b>Add widget</b> at the top right, or start from a template.</p><button class="btn primary" id="wsTpl">Start from a template</button></div>`}</div>`;
+  if ($("#wsTpl", host)) $("#wsTpl", host).onclick = () => showTab("templates");
+  L.widgets.forEach((w) => { const el = $(`.wd[data-wid="${w.id}"]`, host); placeEl(el, w); bindWidgetFrame(el, w, L); mountWidget(el, w); });
+}
+function refreshWidget(wid) {
+  const el = $(`.wd[data-wid="${wid}"]`);
+  if (!el) return;
+  const L = layoutById(el.closest(".ws").dataset.lid), w = L && L.widgets.find((x) => x.id === wid);
+  if (w) mountWidget(el, w);
+}
+function refreshLayout() { if (!S.tab.startsWith("L:")) return; $$(".wd").forEach((el) => { if (el.offsetParent) refreshWidget(el.dataset.wid); }); }
+
+function bindWidgetFrame(el, w, L) {
+  const grid = el.parentElement;
+  const cell = () => { const r = grid.getBoundingClientRect(); return { r, cw: (r.width + GAPPX) / COLS }; };
+  // Move: drag the header.
+  $(".wd-head", el).addEventListener("pointerdown", (e) => {
+    if (e.button !== 0 || e.target.closest("button, input, select, a, .picker")) return;
+    e.preventDefault();
+    const { r, cw } = cell(), sx = e.clientX, sy = e.clientY, ox = w.x, oy = w.y;
+    const start = new Map(L.widgets.map((o) => [o.id, { x: o.x, y: o.y, w: o.w }]));
+    el.classList.add("dragging");
+    const move = (ev) => {
+      const nx = Math.max(0, Math.min(COLS - w.w, ox + Math.round((ev.clientX - sx) / cw)));
+      const ny = Math.max(0, oy + Math.round((ev.clientY - sy) / (wsRowH() + GAPPX)));
+      if (nx === w.x && ny === w.y) return;
+      w.x = nx; w.y = ny;
+      settle(L.widgets, w);
+      L.widgets.forEach((o) => placeEl($(`.wd[data-wid="${o.id}"]`, grid), o));
+    };
+    const up = () => {
+      el.classList.remove("dragging"); document.removeEventListener("pointermove", move); document.removeEventListener("pointerup", up);
+      refill(L.widgets, w, start);
+      settle(L.widgets, null);
+      const resized = L.widgets.filter((o) => o.w !== start.get(o.id).w);
+      L.widgets.forEach((o) => placeEl($(`.wd[data-wid="${o.id}"]`, grid), o)); saveLayouts(); void r;
+      resized.forEach((o) => mountWidget($(`.wd[data-wid="${o.id}"]`, grid), o));
+    };
+    document.addEventListener("pointermove", move); document.addEventListener("pointerup", up);
+  });
+  // Resize: drag the corner.
+  $(".wd-resize", el).addEventListener("pointerdown", (e) => {
+    e.preventDefault(); e.stopPropagation();
+    const { cw } = cell(), sx = e.clientX, sy = e.clientY, ow = w.w, oh = w.h;
+    el.classList.add("dragging");
+    const move = (ev) => {
+      const nw = Math.max(3, Math.min(COLS - w.x, ow + Math.round((ev.clientX - sx) / cw)));
+      const nh = Math.max(4, oh + Math.round((ev.clientY - sy) / (wsRowH() + GAPPX)));
+      if (nw === w.w && nh === w.h) return;
+      w.w = nw; w.h = nh;
+      settle(L.widgets, w);
+      L.widgets.forEach((o) => placeEl($(`.wd[data-wid="${o.id}"]`, grid), o));
+    };
+    const up = () => { el.classList.remove("dragging"); document.removeEventListener("pointermove", move); document.removeEventListener("pointerup", up); saveLayouts(); mountWidget(el, w); };
+    document.addEventListener("pointermove", move); document.addEventListener("pointerup", up);
+  });
+  // Link group.
+  $(".link-btn", el).onclick = (e) => {
+    e.stopPropagation();
+    popMenu(e.currentTarget, [["", "No link"]].concat(LINK_COLORS.map(([k]) => [k, k[0].toUpperCase() + k.slice(1) + " group"])).map(([k, l]) => ({
+      html: `<span class="lc-dot" style="--lc:${k ? linkColor(k) : "transparent"}"></span>${esc(l)}${w.link === k || (!w.link && !k) ? ` <span class="muted">(current)</span>` : ""}`,
+      on: () => { if (k && !LINKS[k]) { LINKS[k] = widgetItem(w); store.set("links", LINKS); } w.link = k || null; el.dataset.link = w.link || ""; $(".link-btn", el).style.setProperty("--lc", linkColor(w.link)); saveLayouts(); mountWidget(el, w); },
+    })));
+  };
+  // Widget menu.
+  $(".wd-menu", el).onclick = (e) => {
+    e.stopPropagation();
+    const spec = WIDGETS[w.type] || {};
+    popMenu(e.currentTarget, [
+      spec.item ? { html: "Change item", on: () => openItemSearch(el, w) } : null,
+      { html: "Duplicate", on: () => { const c = JSON.parse(JSON.stringify(w)); c.id = uid(); c.y = w.y + w.h; L.widgets.push(c); settle(L.widgets, c); saveLayouts(); renderTab(S.tab); } },
+      { html: "Make it wider", on: () => { w.w = Math.min(COLS - w.x, w.w + 4); settle(L.widgets, w); saveLayouts(); renderTab(S.tab); } },
+      { html: `<span class="neg">Remove widget</span>`, on: () => { L.widgets = L.widgets.filter((x) => x.id !== w.id); settle(L.widgets, null); saveLayouts(); renderTab(S.tab); } },
+    ].filter(Boolean));
+  };
+}
+function popMenu(anchor, items) {
+  closePop();
+  const m = document.createElement("div");
+  m.className = "pop-menu";
+  m.innerHTML = items.map((it, i) => `<button data-i="${i}">${it.html}</button>`).join("");
+  document.body.appendChild(m);
+  const r = anchor.getBoundingClientRect();
+  m.style.left = Math.min(window.innerWidth - m.offsetWidth - 8, r.left) + "px";
+  m.style.top = r.bottom + 6 + "px";
+  $$("button", m).forEach((b) => (b.onclick = (e) => { e.stopPropagation(); closePop(); items[+b.dataset.i].on(); }));
+  setTimeout(() => document.addEventListener("click", closePop, { once: true }), 0);
+}
+function closePop() { $$(".pop-menu").forEach((m) => m.remove()); }
+function openItemSearch(el, w) {
+  const t = $(".wd-title", el);
+  t.innerHTML = `<div class="picker wd-search"><input class="input" placeholder="Search an item" autocomplete="off"><div class="picker-list" hidden></div></div>`;
+  const inp = $("input", t);
+  makePicker(inp, $(".picker-list", t), (r) => setWidgetItem(w, r.id));
+  inp.focus();
+  inp.addEventListener("keydown", (e) => { if (e.key === "Escape") mountWidget(el, w); });
+}
+
+function mountWidget(el, w) {
+  const spec = WIDGETS[w.type];
+  const body = $(".wd-body", el), title = $(".wd-title", el), icons = $(".wd-icons", el);
+  if (!spec) { body.innerHTML = `<div class="empty">Unknown widget.</div>`; return; }
+  icons.innerHTML = spec.item ? `<button class="wd-icon wd-find" title="Change item">${wsIcon("search")}</button>` : "";
+  if (spec.item) $(".wd-find", el).onclick = (e) => { e.stopPropagation(); openItemSearch(el, w); };
+  title.innerHTML = spec.item ? "" : `<span class="wd-name">${esc(w.title || spec.name)}</span>`;
+  const ctx = {
+    w, el, body, title, item: widgetItem(w),
+    setItem: (id) => setWidgetItem(w, id),
+    save: () => saveLayouts(),
+    setTitleItem: (row) => {
+      if (!row) return;
+      const chg = row.chg24h;
+      title.innerHTML = `<b class="wd-sym">${esc(row.name)}</b> <span class="wd-px">${pfmt(row.high)}</span> <span class="${signCls(chg)}">${chg == null ? "" : sgnPct(chg, 2)}</span>`;
+    },
+  };
+  Promise.resolve(spec.render(ctx)).catch((e) => { body.innerHTML = `<div class="notice">${esc(e.message)}</div>`; });
+}
+
+// Sparklines (Legend's movers list): dotted line at the first price, lime or coral.
+function sparkSvg(pts, w = 90, h = 26, minSpan = 0) {
+  if (!pts || pts.length < 2) return `<svg width="${w}" height="${h}"></svg>`;
+  const vals = pts.map((p) => p[1]), t0 = pts[0][0], t1 = pts[pts.length - 1][0];
+  let lo = Math.min(...vals), hi = Math.max(...vals);
+  if (hi - lo < minSpan) { const mid = (hi + lo) / 2; lo = mid - minSpan / 2; hi = mid + minSpan / 2; }
+  const x = (t) => ((t - t0) / Math.max(1, t1 - t0)) * (w - 2) + 1, y = (v) => h - 3 - ((v - lo) / ((hi - lo) || 1)) * (h - 6);
+  const up = vals[vals.length - 1] >= vals[0];
+  return `<svg class="spark" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" aria-hidden="true"><line class="spark-base" x1="0" x2="${w}" y1="${y(vals[0])}" y2="${y(vals[0])}"/><path class="${up ? "spark-up" : "spark-down"}" d="${pts.map((p, i) => (i ? "L" : "M") + x(p[0]).toFixed(1) + "," + y(p[1]).toFixed(1)).join("")}"/></svg>`;
+}
+async function sparksFor(ids) { if (!ids.length) return {}; const d = await cachedApi("/api/sparks?ids=" + ids.join(","), 120000); return d.sparks || {}; }
+function chgCells(r) {
+  const net = r.high && r.chg24h != null ? r.high - r.high / (1 + r.chg24h) : null;
+  return `<td class="num opt ${signCls(net)}">${net == null ? "-" : signed(net, pfmt)}</td><td class="num ${signCls(r.chg24h)}">${r.chg24h == null ? "-" : sgnPct(r.chg24h, 2)}</td>`;
+}
+function listTable(ctx, rows, title, extra) {
+  const cols = `<th></th><th>Item</th><th class="sp-h"></th><th class="num">Last</th><th class="num opt">Net chg</th><th class="num">Change %</th>`;
+  ctx.body.innerHTML = `<div class="wd-big">${title}</div>${extra || ""}<div class="wd-scroll"><table class="wd-table"><thead><tr>${cols}</tr></thead><tbody>${rows.map((r, i) => `<tr data-pick="${r.id}" class="${r.id === ctx.item && ctx.w.link ? "sel" : ""}"><td class="muted">${i + 1}</td><td><b>${esc(r.name)}</b></td><td class="sp" data-sp="${r.id}"></td><td class="num">${pfmt(r.high)}</td>${chgCells(r)}</tr>`).join("") || `<tr class="static"><td colspan="6" class="muted">Nothing here yet.</td></tr>`}</tbody></table></div>`;
+  $$("[data-pick]", ctx.body).forEach((tr) => (tr.onclick = () => ctx.setItem(+tr.dataset.pick)));
+  sparksFor(rows.map((r) => r.id)).then((sp) => $$("[data-sp]", ctx.body).forEach((td) => (td.innerHTML = sparkSvg(sp[td.dataset.sp])))).catch(() => {});
+}
+
+// The chart widget (also the Terminal's center panel) ---------------------------------
+function chartDrawings(id) {
+  let d = store.get("draw." + id, null);
+  if (!d) { d = (store.get("tm.lines." + id, []) || []).map((p) => ({ type: "hline", t1: Date.now() / 1000, p1: p })); store.set("draw." + id, d); }
+  return d;
+}
+async function chartLevels(id) {
+  const [t, tg] = await Promise.all([cachedApi("/api/terminal?id=" + id, 20000), cachedApi("/api/targets", 20000)]);
+  const lv = [];
+  (t.slots || []).forEach((s) => lv.push({ price: s.price, kind: s.side, label: `${s.side === "buy" ? "Buy" : "Sell"} ${gp(s.total - s.done)} left${s.acctName ? " · " + s.acctName : ""}` }));
+  const p = t.position;
+  if (p && p.costEach) lv.push({ price: Math.round(p.costEach), kind: "cost", label: `${gp(p.qty)} held ${p.pnl != null ? signed(p.pnl, short) : ""}` });
+  (tg.targets || []).filter((x) => x.item_id === id && !x.hit_at).forEach((x) => lv.push({ price: x.price, kind: "target", label: `Target ${x.side}${x.qty ? " " + gp(x.qty) : ""}` }));
+  return { levels: lv, term: t };
+}
+function planTicket(anchor, id, side, price, after) {
+  closePop();
+  const m = document.createElement("div");
+  m.className = "pop-menu ticket";
+  m.innerHTML = `<div class="tk-h"><b>Plan a ${side}</b><span class="muted small">Bankstanding never places offers. This sets a price target that alerts you (and your phone, if set up).</span></div>
+    <label class="field"><span>${side === "buy" ? "Buy when it drops to" : "Sell when it reaches"}</span><input class="input" id="tkP" value="${price || ""}"></label>
+    <label class="field"><span>Quantity (optional)</span><input class="input" id="tkQ"></label>
+    <div class="inline-form" style="margin-top:8px"><button class="btn ${side === "buy" ? "primary" : "sellbtn"}" id="tkGo">Set ${side} target</button><button class="btn" id="tkX">Cancel</button></div><div id="tkMsg" class="small"></div>`;
+  document.body.appendChild(m);
+  const r = anchor.getBoundingClientRect();
+  m.style.left = Math.min(window.innerWidth - 300, r.left) + "px"; m.style.top = r.bottom + 6 + "px";
+  m.onclick = (e) => e.stopPropagation();
+  setTimeout(() => document.addEventListener("click", closePop, { once: true }), 0);
+  $("#tkX", m).onclick = closePop;
+  $("#tkGo", m).onclick = async () => {
+    try {
+      await api("/api/targets", { method: "POST", body: { item_id: id, side, price: numOr($("#tkP", m).value, NaN), qty: numOr($("#tkQ", m).value, 0) || null } });
+      API_CACHE.delete("/api/targets"); closePop(); after && after();
+    } catch (e) { $("#tkMsg", m).innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+  };
+  $("#tkP", m).focus();
+}
+const IND_LIST = [["vol", "Volume"], ["sma", "SMA 20"], ["ema", "EMA 50"], ["vwap", "VWAP"], ["bb", "Bollinger bands"], ["rsi", "RSI"], ["macd", "MACD"], ["events", "News flags"]];
+// st: {range, interval, type, ind[], tool, cmp}; env: {item, onItemRow(row), save(), height()}
+async function mountChartView(host, st, env) {
+  st.range = st.range || "1M"; st.type = st.type || "candle";
+  // No saved interval: pick the one that gives about one candle per 9px of chart.
+  const iv = st.interval && intervalsFor(st.range).some(([k]) => k === st.interval) ? st.interval : fitInterval(st.range, host.clientWidth || 800);
+  st.ind = st.ind || ["vol", "events"];
+  const id = env.item;
+  host.innerHTML = `<div class="cv">
+    <div class="cv-top"><button class="cv-buy" title="Plan a buy (sets a target)">Buy</button><button class="cv-sell" title="Plan a sell (sets a target)">Sell</button><div class="tc-read cv-read"></div>
+      <div class="cv-tools">${[["trend", "Trend line"], ["rect", "Rectangle"], ["hline", "Price level"], ["fib", "Fibonacci retracement"]].map(([k, l]) => `<button class="cv-ic ${st.tool === k ? "on" : ""}" data-tool="${k}" title="${l}">${wsIcon(k)}</button>`).join("")}${st.tool ? `<button class="cv-done" data-tool="">Done</button>` : ""}<button class="cv-ic" data-erase title="Clear drawings for this item">${wsIcon("erase")}</button>
+      <span class="cv-sep"></span><button class="cv-ic" data-ind title="Indicators">${wsIcon("func")}</button><button class="cv-ic" data-type title="Candles or line">${wsIcon(st.type === "line" ? "line" : "candles")}</button></div></div>
+    <div class="cv-chart"></div>
+    <div class="cv-bottom">${RANGES.map(([k]) => `<button data-range="${k}" class="${st.range === k ? "on" : ""}">${k}</button>`).join("")}
+      <span class="cv-int"><span class="muted">Interval:</span>${intervalsFor(st.range).map(([k]) => `<button data-int="${k}" class="${iv === k ? "on" : ""}">${k}</button>`).join("")}</span>
+      ${st.tool ? `<span class="cv-hint">${st.tool === "hline" ? "Click the chart to place a level" : "Click two points on the chart"}; right click a drawing to delete it</span>` : ""}</div></div>`;
+  const redraw = () => mountChartView(host, st, env);
+  $$("[data-range]", host).forEach((b) => (b.onclick = () => { st.range = b.dataset.range; if (!intervalsFor(st.range).some(([k]) => k === st.interval)) delete st.interval; env.save(); redraw(); }));
+  $$("[data-int]", host).forEach((b) => (b.onclick = () => { st.interval = b.dataset.int; env.save(); redraw(); }));
+  $$("[data-tool]", host).forEach((b) => (b.onclick = () => { st.tool = st.tool === b.dataset.tool ? "" : b.dataset.tool; env.save(); redraw(); }));
+  $("[data-erase]", host).onclick = () => { store.set("draw." + id, []); redraw(); };
+  if (st.tool) host.dataset.tool = st.tool; else delete host.dataset.tool;
+  $("[data-type]", host).onclick = () => { st.type = st.type === "line" ? "candle" : "line"; env.save(); redraw(); };
+  $("[data-ind]", host).onclick = (e) => { e.stopPropagation(); popMenu(e.currentTarget, IND_LIST.map(([k, l]) => ({ html: `<span class="chk ${st.ind.includes(k) ? "on" : ""}"></span>${esc(l)}`, on: () => { st.ind = st.ind.includes(k) ? st.ind.filter((x) => x !== k) : st.ind.concat(k); env.save(); redraw(); } }))); };
+  let bars, lv = { levels: [], term: null };
+  try { [bars, lv] = await Promise.all([loadBars(id, st.range, iv), chartLevels(id).catch(() => lv)]); }
+  catch (e) { $(".cv-chart", host).innerHTML = `<div class="notice">${esc(e.message)}</div>`; return; }
+  if (!host.isConnected) return;
+  const row = S.byId.get(id) || (lv.term && lv.term.row) || { id, name: (lv.term && lv.term.meta && lv.term.meta.name) || "Item " + id };
+  if (env.onItemRow) env.onItemRow(Object.assign({ name: (lv.term && lv.term.meta && lv.term.meta.name) }, row));
+  let cmp = [];
+  if (env.compare) cmp = await env.compare().catch(() => []);
+  else if (st.cmp === "market") { const d = await cachedApi(`/api/marketindex?days=${Math.max(2, rangeDays(st.range))}`, 600000); cmp = [{ name: "Market index", color: "var(--series-2)", pts: d.series }]; }
+  if (!host.isConnected) return;
+  const news = lv.term ? (lv.term.news || []).map((x) => ({ t: x.t, title: x.title, kind: x.kindLabel, upcoming: x.upcoming })) : [];
+  const last = bars.length ? bars[bars.length - 1].c : null;
+  $(".cv-buy", host).onclick = (e) => planTicket(e.currentTarget, id, "buy", row.low || Math.round(last || 0), redraw);
+  $(".cv-sell", host).onclick = (e) => planTicket(e.currentTarget, id, "sell", row.high || Math.round(last || 0), redraw);
+  tradingChart($(".cv-chart", host), bars, {
+    type: st.type, ind: new Set(st.ind), compare: cmp, name: row.name, levels: lv.levels, events: news,
+    drawings: chartDrawings(id), tool: st.tool, readoutEl: $(".cv-read", host),
+    height: env.height ? env.height() : Math.max(120, $(".cv-chart", host).clientHeight - 40 - (st.ind.includes("rsi") ? 72 : 0) - (st.ind.includes("macd") ? 72 : 0) - (cmp.length ? 22 : 0)),
+    onDraw: (d) => { const all = chartDrawings(id); all.push(d); store.set("draw." + id, all); redraw(); },
+    onErase: (k) => { const all = chartDrawings(id); all.splice(k, 1); store.set("draw." + id, all); redraw(); },
+    onPlus: (price) => planTicket($(".cv-chart", host), id, last && price < last ? "buy" : "sell", price, redraw),
+    onEvent: env.onEvent,
+    aria: `${row.name} price chart`,
+  });
+}
+
+// Widgets --------------------------------------------------------------------------------
+const WIDGETS = {
+  account: {
+    name: "Account", desc: "Net worth, today's change, a sparkline and your cash and GE totals.", size: [6, 9],
+    async render(ctx) {
+      const v = await cachedApi(`/api/networth?acct=${encodeURIComponent(NW.acct)}&days=1`, 20000);
+      const ch = (v.changes || {}).d1;
+      const acctName = NW.acct ? ((v.accountList || []).find((a) => a.acct === NW.acct) || {}).name : "All accounts";
+      const hist = (v.history || []).map((h) => [h.ts, h.total]);
+      if (v.total) hist.push([Date.now() / 1000, v.total]);
+      ctx.body.innerHTML = `<div class="wa"><div class="wa-top"><div><div class="wa-name">${esc(acctName || "Account")}</div><div class="wa-val">${gp(v.total)} <span class="muted">gp</span></div>
+        <div class="${signCls(ch && ch.gp)}">${ch ? `${signed(ch.gp, short)} (${pct(Math.abs(ch.pct), 2)})` : "-"} <span class="muted">today</span></div></div><button class="btn small" data-refresh>Refresh</button></div>
+        <div class="wa-spark">${sparkSvg(hist, 300, 70, (v.total || 0) * 0.01)}</div>
+        <h4>Overview</h4><div class="kv"><span class="k">Cash</span><span>${gp(v.cash)}</span><span class="k">Items</span><span>${gp(v.items)}</span><span class="k">In the GE</span><span>${gp(v.ge)}</span><span class="k">Unrealized P/L</span><span class="${signCls(v.pnl)}">${v.pnl ? signed(v.pnl, short) : "-"}</span></div></div>`;
+      $("[data-refresh]", ctx.body).onclick = async () => { await api("/api/account/refresh", { method: "POST" }); API_CACHE.clear(); refreshLayout(); };
+    },
+  },
+  chart: {
+    name: "Chart", desc: "Candles with indicators, drawings, intervals, and your offers, cost and targets on the chart.", size: [12, 12], item: true,
+    render(ctx) {
+      ctx.w.opts = ctx.w.opts || {};
+      return mountChartView(ctx.body, ctx.w.opts, { item: ctx.item, save: ctx.save, onItemRow: ctx.setTitleItem });
+    },
+  },
+  positions: {
+    name: "Positions", desc: "What you hold, with market value, day return, average cost and profit or loss.", size: [6, 12],
+    async render(ctx) {
+      const v = await cachedApi(`/api/networth?acct=${encodeURIComponent(NW.acct)}&days=1`, 20000);
+      const rows = v.holdings.filter((h) => h.how !== "cash");
+      ctx.body.innerHTML = `<div class="wd-big">Positions</div><div class="wd-scroll"><table class="wd-table"><thead><tr><th>Item</th><th class="num">Qty</th><th class="num">Mkt val</th><th class="num">Day return</th><th class="num">Avg cost</th><th class="num">P/L</th></tr></thead><tbody>
+        ${rows.map((h) => `<tr data-pick="${h.id}" class="${h.id === ctx.item && ctx.w.link ? "sel" : ""}"><td><b>${esc(h.name)}</b></td><td class="num">${gp(h.qty)}</td><td class="num">${short(h.value)}</td><td class="num ${signCls(h.chg24gp)}">${h.chg24gp ? signed(h.chg24gp, short) : "-"}</td><td class="num">${h.costEach == null ? "-" : gp(h.costEach)}</td><td class="num ${signCls(h.pnl)}">${h.pnl == null ? "-" : signed(h.pnl, short)}</td></tr>`).join("") || `<tr class="static"><td colspan="6" class="muted">No holdings yet.</td></tr>`}</tbody></table></div>`;
+      $$("[data-pick]", ctx.body).forEach((tr) => (tr.onclick = () => ctx.setItem(+tr.dataset.pick)));
+    },
+  },
+  orders: {
+    name: "Recent orders", desc: "Your GE offers: working, filled and canceled, with side, quantity and price.", size: [6, 12],
+    async render(ctx) {
+      const d = await cachedApi(`/api/account/offers?acct=${encodeURIComponent(NW.acct)}`, 15000);
+      ctx.body.innerHTML = `<div class="wd-big">Recent orders</div><div class="wd-scroll"><table class="wd-table"><thead><tr><th>Item</th><th>Status</th><th>Side</th><th>Type</th><th class="num">Quantity</th><th class="num">Price</th></tr></thead><tbody>
+        ${d.orders.map((o) => `<tr data-pick="${o.item}"><td><b>${esc(o.name || "Item " + o.item)}</b></td><td><span class="st st-${o.status.toLowerCase()}">${esc(o.status)}</span></td><td class="${o.side === "buy" ? "pos" : "neg"}">${o.side === "buy" ? "Buy" : "Sell"}</td><td>Limit</td><td class="num">${o.status === "Working" || o.status === "Partial" ? `${gp(o.done)}/${gp(o.qty)}` : gp(o.qty)}</td><td class="num">${gp(o.price)}</td></tr>`).join("") || `<tr class="static"><td colspan="6" class="muted">No GE offers seen yet. They appear here with the RuneLite plugin running.</td></tr>`}</tbody></table></div>`;
+      $$("[data-pick]", ctx.body).forEach((tr) => (tr.onclick = () => ctx.setItem(+tr.dataset.pick)));
+    },
+  },
+  movers: {
+    name: "Market movers", desc: "Biggest gainers, losers or most traded, with sparklines.", size: [6, 14],
+    render(ctx) {
+      const mode = (ctx.w.opts && ctx.w.opts.mode) || "gain";
+      const liquid = S.rows.filter((r) => r.high && r.chg24h != null && (r.vol24 || 0) > 2000);
+      const rows = mode === "lose" ? liquid.sort((a, b) => a.chg24h - b.chg24h) : mode === "top" ? liquid.sort((a, b) => b.vol24 * b.high - a.vol24 * a.high) : liquid.sort((a, b) => b.chg24h - a.chg24h);
+      listTable(ctx, rows.slice(0, 25), `<button class="wd-title-btn" data-mode>${{ gain: "Market movers", lose: "Market losers", top: "Most traded" }[mode]} <span class="muted">⇅</span></button>`);
+      $("[data-mode]", ctx.body).onclick = (e) => popMenu(e.currentTarget, [["gain", "Market movers (gainers)"], ["lose", "Market losers"], ["top", "Most traded"]].map(([k, l]) => ({ html: esc(l), on: () => { ctx.w.opts = Object.assign(ctx.w.opts || {}, { mode: k }); ctx.save(); mountWidget(ctx.el, ctx.w); } })));
+    },
+  },
+  watchlist: {
+    name: "Watchlist", desc: "Your starred items with sparklines, last price and change.", size: [6, 14],
+    render(ctx) { listTable(ctx, [...S.watch].map((id) => S.byId.get(id)).filter(Boolean), "My watchlist"); },
+  },
+  slots: {
+    name: "GE slots", desc: "Your eight Grand Exchange slots, live, with fill progress and notes.", size: [12, 8],
+    async render(ctx) {
+      const d = await cachedApi("/api/slots", 15000);
+      const a = d.accounts.find((x) => !NW.acct || x.acct === NW.acct);
+      if (!a) { ctx.body.innerHTML = `<div class="empty">No GE offers seen yet.</div>`; return; }
+      const by = new Map(a.slots.map((s) => [s.slot, s])); const cells = [];
+      for (let i = 0; i < 8; i++) cells.push(slotCard(by.get(i) || { slot: i, state: "EMPTY" }));
+      ctx.body.innerHTML = `<div class="slots">${cells.join("")}</div>`;
+      $$(".slot[data-id]", ctx.body).forEach((el) => (el.onclick = () => ctx.setItem(+el.dataset.id)));
+    },
+  },
+  quote: {
+    name: "Quote", desc: "Instant prices, spread, tax, flip profit, limit left and your position for the linked item.", size: [6, 12], item: true,
+    async render(ctx) {
+      const d = await cachedApi("/api/terminal?id=" + ctx.item, 20000);
+      const r = d.row || {}, p = d.position;
+      ctx.setTitleItem(Object.assign({ name: d.meta.name }, r));
+      ctx.body.innerHTML = `<div class="q-grid"><div class="q"><div class="k">Instant buy</div><div class="v">${pfmt(r.high)}</div><div class="s muted">sell here</div></div><div class="q"><div class="k">Instant sell</div><div class="v">${pfmt(r.low)}</div><div class="s muted">buy here</div></div></div>
+        <div class="kv small"><span class="k">Spread</span><span>${r.high && r.low ? pfmt(r.high - r.low) : "-"}</span><span class="k">Tax on a sale</span><span>${gp(d.taxEach)}</span>
+        <span class="k">Flip profit each</span><span class="${signCls(r.profit)}">${r.profit == null ? "-" : signed(r.profit)}</span><span class="k">Suggested offers</span><span>buy ${pfmt(r.low ? r.low + 1 : null)} · sell ${pfmt(r.high ? r.high - 1 : null)}</span>
+        <span class="k">Your limit left</span><span>${d.limit ? gp(d.limit.left) : gp(d.meta.limit)}</span><span class="k">Fill time</span><span>${r.fillHrs != null ? r.fillHrs.toFixed(1) + "h for a limit" : "-"}</span>
+        <span class="k">Held</span><span>${p ? `${gp(p.qty)} · ${short(p.value)}` : "none"}</span><span class="k">Unrealized</span><span class="${signCls(p && p.pnl)}">${p && p.pnl != null ? signed(p.pnl, short) : "-"}</span></div>
+        <div class="inline-form"><button class="btn small primary" data-b>Plan a buy</button><button class="btn small sellbtn" data-s>Plan a sell</button><button class="btn small" data-t>Terminal</button></div>`;
+      $("[data-b]", ctx.body).onclick = (e) => planTicket(e.currentTarget, ctx.item, "buy", r.low, () => refreshWidget(ctx.w.id));
+      $("[data-s]", ctx.body).onclick = (e) => planTicket(e.currentTarget, ctx.item, "sell", r.high, () => refreshWidget(ctx.w.id));
+      $("[data-t]", ctx.body).onclick = () => openTerminal(ctx.item);
+    },
+  },
+  news: {
+    name: "News", desc: "Game updates, blogs and polls; with a link group, the posts about the linked item.", size: [6, 12],
+    async render(ctx) {
+      const item = ctx.w.link ? ctx.item : null;
+      const d = await cachedApi(`/api/news?days=${item ? 800 : 30}${item ? "&item=" + item : ""}&limit=30`, 300000);
+      const nm = item ? (S.byId.get(item) || {}).name : null;
+      ctx.body.innerHTML = `<div class="wd-big">${item ? "News: " + esc(nm || "") : "News"}</div><div class="wd-scroll news-list">${d.items.map(newsCard).join("") || `<div class="muted small">No posts${item ? " about this item" : ""}.</div>`}</div>`;
+      bindNewsCards(ctx.body);
+    },
+  },
+  coach: {
+    name: "Needs attention", desc: "The offer coach: stale offers, positions below break-even, pump warnings.", size: [6, 10],
+    async render(ctx) { const c = await cachedApi("/api/coach", 30000); ctx.body.innerHTML = `<div class="wd-big">Needs attention</div><div class="wd-scroll">${coachList(c.items, { empty: "All your offers and positions look fine." })}</div>`; $$("[data-cid]", ctx.body).forEach((el) => (el.onclick = () => ctx.setItem(+el.dataset.cid))); },
+  },
+  flips: {
+    name: "Top flips", desc: "The best flips right now by stability adjusted 4 hour profit.", size: [12, 10],
+    render(ctx) {
+      const rows = S.rows.filter((r) => r.profit > 0 && !r.trap && !r.stale && (r.vol24 || 0) >= 1000).sort((a, b) => (b.adj4h || 0) - (a.adj4h || 0)).slice(0, 25);
+      ctx.body.innerHTML = `<div class="wd-big">Top flips</div><div class="wd-scroll"><table class="wd-table"><thead><tr><th>Item</th><th class="num">Buy at</th><th class="num">Sell at</th><th class="num">Profit</th><th class="num">ROI</th><th class="num">Stability</th><th class="num">Adj. 4h</th></tr></thead><tbody>
+        ${rows.map((r) => `<tr data-pick="${r.id}"><td><b>${esc(r.name)}</b></td><td class="num">${gp(r.low)}</td><td class="num">${gp(r.high)}</td><td class="num pos">${gp(r.profit)}</td><td class="num">${pct(r.roi, 2)}</td><td class="num">${r.stability == null ? "-" : pct(r.stability, 0)}</td><td class="num"><b>${short(r.adj4h)}</b></td></tr>`).join("")}</tbody></table></div>`;
+      $$("[data-pick]", ctx.body).forEach((tr) => (tr.onclick = () => ctx.setItem(+tr.dataset.pick)));
+    },
+  },
+  heatmap: {
+    name: "Market heatmap", desc: "The 200 biggest markets by class, sized by gp traded, colored by the day's move.", size: [12, 12],
+    async render(ctx) {
+      const d = await cachedApi("/api/heatmap?n=200", 60000);
+      const groups = {}; d.items.forEach((i) => (groups[i.category] = groups[i.category] || []).push(i));
+      treemap(ctx.body, Object.entries(groups).map(([name, items]) => ({ name, items })), { height: Math.max(160, ctx.body.clientHeight - 30), range: 0.05, valueLabel: "24h gp traded", legend: "Size: gp traded. Color: 24h change.", onPick: (x) => ctx.setItem(x.id) });
+    },
+  },
+  performance: {
+    name: "Performance", desc: "Your return against the market index, and where the change came from.", size: [12, 12],
+    render(ctx) { ctx.body.innerHTML = `<div id="nwPerf"></div>`; return loadPerformance(ctx.body, NW.acct, "30"); },
+  },
+  page: {
+    name: "Page", desc: "Any full page (Bank statement, Flip finder, News...) as a widget.", size: [12, 16],
+    render(ctx) {
+      const pg = (ctx.w.opts && ctx.w.opts.page) || "statement";
+      ctx.title.innerHTML = `<span class="wd-name">${esc(PAGE_LABEL[pg] || pg)}</span>`;
+      ctx.body.classList.add("wd-page");
+      const fn = renderers[pg]; if (fn) return fn(ctx.body);
+    },
+  },
+};
+
+// Templates (Legend's "Start from a template", for OSRS) --------------------------------
+// Widgets as [type, x, y, w, h, link, opts]; opts.pick fills an item when the layout is made.
+const TEMPLATES = [
+  { key: "flip", name: "Flipping desk", desc: "Find, plan and watch flips from one layout.", icon: "flips", widgets: [["account", 0, 0, 6, 9], ["chart", 6, 0, 12, 13, "blue"], ["orders", 18, 0, 6, 13], ["flips", 0, 9, 6, 13, "blue"], ["slots", 6, 13, 12, 9], ["quote", 18, 13, 6, 9, "blue"]] },
+  { key: "portfolio", name: "Portfolio", desc: "Your account like a brokerage: value, positions, performance.", icon: "networth", widgets: [["account", 0, 0, 6, 10], ["performance", 6, 0, 12, 10], ["coach", 18, 0, 6, 10], ["positions", 0, 10, 8, 13, "blue"], ["chart", 8, 10, 10, 13, "blue"], ["news", 18, 10, 6, 13, "blue"]] },
+  { key: "spotlight", name: "Chart spotlight", desc: "Trade from a larger chart as you watch the market move.", icon: "terminal", widgets: [["movers", 0, 0, 6, 22, "blue"], ["chart", 6, 0, 18, 22, "blue", { range: "1W" }]] },
+  { key: "posanalysis", name: "Positions analysis", desc: "Do a deep dive on your positions and plan your next move.", icon: "portfolio", widgets: [["positions", 0, 0, 9, 22, "blue"], ["chart", 9, 0, 15, 14, "blue", { range: "3M" }], ["quote", 9, 14, 7, 8, "blue"], ["news", 16, 14, 8, 8, "blue"]] },
+  { key: "posmon", name: "Positions monitoring", desc: "Track trends on your biggest positions across 4 charts.", icon: "watch", widgets: [["positions", 0, 0, 6, 22, "blue"], ["chart", 6, 0, 9, 11, null, { pick: "hold:0" }], ["chart", 15, 0, 9, 11, null, { pick: "hold:1" }], ["chart", 6, 11, 9, 11, null, { pick: "hold:2" }], ["chart", 15, 11, 9, 11, null, { pick: "hold:3" }]] },
+  { key: "watchmon", name: "Watchlist monitoring", desc: "Track trends on your watchlist across 4 charts.", icon: "watch", widgets: [["watchlist", 0, 0, 6, 22, "blue"], ["chart", 6, 0, 9, 11, null, { pick: "watch:0" }], ["chart", 15, 0, 9, 11, null, { pick: "watch:1" }], ["chart", 6, 11, 9, 11, null, { pick: "watch:2" }], ["chart", 15, 11, 9, 11, null, { pick: "watch:3" }]] },
+  { key: "marketmon", name: "Market monitoring", desc: "Track the biggest markets across 8 charts.", icon: "market", widgets: [0, 1, 2, 3, 4, 5, 6, 7].map((k) => ["chart", (k % 4) * 6, Math.floor(k / 4) * 11, 6, 11, null, { pick: "top:" + k, range: "1W" }]) },
+  { key: "newsdesk", name: "News desk", desc: "Updates, the market heatmap and movers, linked to one chart.", icon: "news", widgets: [["news", 0, 0, 7, 22, "blue"], ["chart", 7, 0, 11, 12, "blue"], ["movers", 18, 0, 6, 22, "blue"], ["heatmap", 7, 12, 11, 10]] },
+];
+function pickItem(spec) {
+  const [kind, k] = spec.split(":"), i = +k;
+  const top = S.rows.slice().sort((a, b) => (b.vol24 || 0) * (b.high || 0) - (a.vol24 || 0) * (a.high || 0));
+  if (kind === "watch") { const w = [...S.watch]; return w[i] || (top[i] || {}).id; }
+  if (kind === "hold") return (WS_HOLD[i] || top[i] || {}).id || (top[i] || {}).id;
+  return (top[i] || {}).id;
+}
+let WS_HOLD = [];
+async function createFromTemplate(key, name) {
+  const t = TEMPLATES.find((x) => x.key === key);
+  if (t.widgets.some((w) => w[6] && String(w[6].pick).startsWith("hold"))) {
+    try { const v = await cachedApi("/api/networth?days=1", 20000); WS_HOLD = v.holdings.filter((h) => h.how !== "cash"); } catch (e) { WS_HOLD = []; }
+  }
+  const L = { id: uid(), name: name || t.name, icon: t.icon, widgets: t.widgets.map(([type, x, y, w, h, link, opts]) => {
+    const o = Object.assign({}, opts || {}); const item = o.pick ? pickItem(o.pick) : null; delete o.pick;
+    return { id: uid(), type, x, y, w, h, link: link || null, item, opts: o };
+  }) };
+  LAYOUTS = (LAYOUTS || []).concat(L);
+  if (!LINKS.blue) { LINKS.blue = defaultItem(); store.set("links", LINKS); }
+  saveLayouts();
+  return L;
+}
+function templatePreview(t) {
+  const W = 240, H = 130, sx = W / COLS, rows = Math.max(...t.widgets.map((w) => w[2] + w[4])), sy = H / rows;
+  return `<svg viewBox="0 0 ${W} ${H}" class="tpl-svg" aria-hidden="true">${t.widgets.map(([type, x, y, w, h]) => {
+    const X = x * sx + 1, Y = y * sy + 1, Wd = w * sx - 2, Hd = h * sy - 2;
+    let g = "";
+    if (type === "chart") { const n = Math.max(5, Math.floor(Wd / 9)); for (let i = 0; i < n; i++) { const cx = X + 6 + i * ((Wd - 12) / n), up = (i * 7 + x) % 3 !== 0, mid = Y + Hd / 2 + Math.sin(i + x) * Hd * 0.12; g += `<line x1="${cx}" x2="${cx}" y1="${mid - 7}" y2="${mid + 7}" class="${up ? "tp-up" : "tp-dn"}"/><rect x="${cx - 2}" y="${mid - 4}" width="4" height="8" class="${up ? "tp-upf" : "tp-dnf"}"/>`; } }
+    else if (type === "account") g = `<text x="${X + 5}" y="${Y + 14}" class="tp-num">14,415,030</text><path d="M${X + 5} ${Y + Hd - 8} l${Wd * 0.3} -6 l${Wd * 0.2} 3 l${Wd * 0.4} -10" class="tp-up" fill="none"/>`;
+    else if (type === "heatmap") g = `<rect x="${X + 3}" y="${Y + 3}" width="${Wd * 0.5}" height="${Hd - 6}" class="tp-upf" opacity=".5"/><rect x="${X + Wd * 0.5 + 5}" y="${Y + 3}" width="${Wd * 0.5 - 8}" height="${Hd * 0.6}" class="tp-dnf" opacity=".5"/>`;
+    else { for (let k = 0; k < Math.min(6, Math.floor(Hd / 9)); k++) g += `<rect x="${X + 5}" y="${Y + 6 + k * 9}" width="${Wd * 0.35}" height="3" class="tp-line"/><rect x="${X + Wd - 5 - Wd * 0.2}" y="${Y + 6 + k * 9}" width="${Wd * 0.2}" height="3" class="${(k + x) % 3 ? "tp-upf" : "tp-dnf"}" opacity=".7"/>`; }
+    return `<rect x="${X}" y="${Y}" width="${Wd}" height="${Hd}" rx="3" class="tp-panel"/>${g}`;
+  }).join("")}</svg>`;
+}
+renderers.templates = function (host) {
+  host.innerHTML = `<div class="tpl-page"><h1 class="tpl-h">Start from a template</h1>
+    <div class="tpl-grid">${TEMPLATES.map((t) => `<button class="tpl" data-tpl="${t.key}"><div class="tpl-prev">${templatePreview(t)}</div><div class="tpl-name">${esc(t.name)}</div><div class="tpl-desc">${esc(t.desc)}</div></button>`).join("")}
+      <button class="tpl" data-tpl=""><div class="tpl-prev tpl-blank">+</div><div class="tpl-name">Blank layout</div><div class="tpl-desc">Start empty and add widgets yourself.</div></button></div></div>`;
+  $$("[data-tpl]", host).forEach((b) => (b.onclick = async () => {
+    let L;
+    if (b.dataset.tpl) L = await createFromTemplate(b.dataset.tpl);
+    else { L = { id: uid(), name: "Untitled layout", icon: "market", widgets: [] }; LAYOUTS = (LAYOUTS || []).concat(L); saveLayouts(); }
+    OPEN_TABS.push("L:" + L.id); store.set("openTabs", OPEN_TABS);
+    showTab("L:" + L.id);
+  }));
+};
+
+// Add widget ---------------------------------------------------------------------------
+function openWidgetPicker() {
+  const lid = S.tab.startsWith("L:") ? S.tab.slice(2) : null;
+  if (!lid) return;
+  const L = layoutById(lid);
+  const m = document.createElement("div");
+  m.className = "modal";
+  const pages = PAGE_GROUPS.flatMap(([, p]) => p);
+  m.innerHTML = `<div class="modal-card"><div class="modal-h"><h2 style="margin:0">Add widget</h2><button class="icon-btn" data-x>×</button></div>
+    <div class="wp-grid">${Object.entries(WIDGETS).filter(([k]) => k !== "page").map(([k, s]) => `<button class="wp" data-add="${k}"><b>${esc(s.name)}</b><span class="muted small">${esc(s.desc)}</span></button>`).join("")}</div>
+    <h4>Or any page as a widget</h4><div class="chips">${pages.map(([k, l]) => `<button class="chip" data-page="${k}">${esc(l)}</button>`).join("")}</div></div>`;
+  document.body.appendChild(m);
+  const close = () => m.remove();
+  $("[data-x]", m).onclick = close; m.onclick = (e) => { if (e.target === m) close(); };
+  const add = (type, opts) => {
+    const spec = WIDGETS[type], [w, h] = spec.size || [6, 10];
+    const bottom = Math.max(0, ...L.widgets.map((x) => x.y + x.h));
+    const wd = { id: uid(), type, x: 0, y: bottom, w, h, link: spec.item || ["positions", "movers", "watchlist", "orders", "flips", "news"].includes(type) ? "blue" : null, item: null, opts: opts || {} };
+    L.widgets.push(wd); settle(L.widgets, null); saveLayouts(); close(); renderTab(S.tab);
+    const el = $(`.wd[data-wid="${wd.id}"]`); if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+  };
+  $$("[data-add]", m).forEach((b) => (b.onclick = () => add(b.dataset.add)));
+  $$("[data-page]", m).forEach((b) => (b.onclick = () => add("page", { page: b.dataset.page })));
+}
+function layoutMenu(anchor, lid) {
+  const L = layoutById(lid); if (!L) return;
+  popMenu(anchor, [
+    { html: "Rename", on: () => { const n = prompt("Layout name", L.name); if (n && n.trim()) { L.name = n.trim().slice(0, 40); saveLayouts(); drawTabs(); } } },
+    { html: "Duplicate", on: () => { const c = JSON.parse(JSON.stringify(L)); c.id = uid(); c.name = L.name + " copy"; c.widgets.forEach((w) => (w.id = uid())); LAYOUTS.push(c); saveLayouts(); OPEN_TABS.push("L:" + c.id); store.set("openTabs", OPEN_TABS); showTab("L:" + c.id); } },
+    { html: "Open in a new window", on: () => window.open(location.pathname + "?layout=" + encodeURIComponent(lid), "bs_" + lid, "width=1600,height=1000") },
+    { html: "Add widget", on: openWidgetPicker },
+    { html: `<span class="neg">Delete layout</span>`, on: () => { LAYOUTS = LAYOUTS.filter((x) => x.id !== lid); saveLayouts(); OPEN_TABS = OPEN_TABS.filter((k) => k !== "L:" + lid); store.set("openTabs", OPEN_TABS); showTab(OPEN_TABS[0] || "networth"); } },
+  ]);
+}
+async function ensureDefaultLayouts() {
+  if (LAYOUTS) return;
+  LAYOUTS = [];
+  const a = await createFromTemplate("flip"), b = await createFromTemplate("marketmon", "Monitoring");
+  const keep = OPEN_TABS.filter((k) => !k.startsWith("L:"));
+  const i = Math.max(0, keep.indexOf("networth") + 1);
+  keep.splice(i, 0, "L:" + a.id, "L:" + b.id);
+  OPEN_TABS = keep; store.set("openTabs", OPEN_TABS); drawTabs();
+}
+let WS_RESIZE = null;
+window.addEventListener("resize", () => { clearTimeout(WS_RESIZE); WS_RESIZE = setTimeout(() => { if (S.tab.startsWith("L:")) renderTab(S.tab); }, 250); });
+
+
+$("#addWidget").onclick = openWidgetPicker;
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") { closePop(); $$(".modal").forEach((m) => m.remove()); } });
 
 // Money making: recipes and item sets ---------------------------------------------
 const MM = Object.assign({ patient: true, skill: "all", hideRisky: true, q: "", setDir: "all", rates: {}, smithing: "" }, store.get("mm", {}));
@@ -3118,8 +3789,14 @@ async function loadMarket() {
     S.watch = new Set(d.watchlist); S.now = d.now; S.status = d.status;
     S.limits = d.limits || {}; S.tax = d.tax; S.fillShare = d.fillShare;
     setLive();
-    if (!S.loaded) { S.loaded = true; showTab(S.tab in renderers ? S.tab : "networth"); }
-    else if (["flips", "movers", "alch", "market", "networth"].includes(S.tab)) renderTab(S.tab, true);
+    if (!S.loaded) {
+      S.loaded = true;
+      await ensureDefaultLayouts();
+      const want = new URLSearchParams(location.search).get("layout");
+      if (want && layoutById(want)) { if (!OPEN_TABS.includes("L:" + want)) { OPEN_TABS.push("L:" + want); store.set("openTabs", OPEN_TABS); } showTab("L:" + want); }
+      else showTab(S.tab in renderers || (isLayoutTab(S.tab) && layoutById(S.tab.slice(2))) ? S.tab : "networth");
+    }
+    else if (["flips", "movers", "alch", "market", "networth"].includes(S.tab) || isLayoutTab(S.tab)) { API_CACHE.clear(); renderTab(S.tab, true); }
   } catch (e) {
     $("#liveStatus").className = "live bad"; $(".txt", $("#liveStatus")).textContent = "App not running";
   }

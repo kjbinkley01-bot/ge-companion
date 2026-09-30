@@ -114,7 +114,19 @@ A free alternative to GE Tracker premium, built only on public, read-only data.
   `arrow()`, `signed()` and `sgnPct()`. The app opens on Net worth. Charts are hand-rolled SVG
   (`priceChart`, `lineChart`, `barChart`, `heatmap`, `tradingChart`, `treemap`), colors are
   CSS tokens in `style.css`; categorical series colors pass the dataviz palette validator in
-  both themes, and up and down always carry a second cue (triangle, hollow vs filled candles).
+  both themes, and up and down always carry a second cue (triangles; candles are filled like Legend's, and
+  lime and coral also differ strongly in lightness).
+  Layouts (Legend's workspaces): header tabs keyed `L:<id>` hold a 24 column grid of widgets
+  (`WIDGETS` registry, rows stretch so 22 rows fill the window) saved in localStorage
+  `layouts`; drag by the header, resize by the corner (`settle` pushes down and compacts,
+  `refill` swaps a displaced widget into the freed span). Link colors (`LINKS`, localStorage
+  `links`) make widgets follow one item, synced across windows with a BroadcastChannel; blue
+  also drives the Terminal. `TEMPLATES` feed the "Start from a template" page; the first run
+  creates "Flipping desk" and "Monitoring". `mountChartView` is the chart widget and the
+  Terminal's chart: ranges 1D to All, intervals, indicators menu, drawings (per item in
+  localStorage `draw.<id>`), levels for GE offers, cost and targets, Buy/Sell and the axis "+"
+  open `planTicket`, which only saves a price target (never an offer). Endpoints for widgets:
+  `/api/account/offers` (working and finished offers) and `/api/sparks` (24h mids).
   The Terminal tab is a linked workspace (panels marked with Legend's link square): list,
   chart, quote/position and news panels all follow `TM.id`, with keyboard shortcuts. Candles
   are approximate (built from window averages: close = mid, open = previous close, wicks =
@@ -152,6 +164,10 @@ v5: renamed Bankstanding; Legend layout (page tabs, measured palette, Inter); Ba
 account limits; phone notifications and LAN mode; goals and income; edge report, strategy
 tags, paper trading; price targets and ladders; manipulation guard; guide prices; clue
 values; custom categories; RuneLite side panel.
+v6: Legend workspaces (layouts of widgets with drag, resize, add and remove, color linking
+across layouts and windows, 8 templates), Legend chart (ranges and intervals, drawings,
+offers, cost and targets on the chart, Buy/Sell plan tickets), palette refined to the product
+images (#CCFF00 lime, #1a1b1e panels, teal header glow).
 Open questions to verify in game: whether a sell offer's `spent` is before or after tax
 (`account.sell_split` handles both), and how promptly collection box containers update.
 Hiscores response format verified against the live endpoint (Sep 2026).

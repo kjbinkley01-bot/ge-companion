@@ -429,6 +429,44 @@ def make_handler(app):
                 return self._send(200, st)
             if path == "/api/coach":
                 return self._send(200, {"items": coach.check(D, E, app.cfg)})
+            if path == "/api/account/offers":
+                # Recent orders, Legend style: open offers first, then finished ones.
+                acct = q.get("acct") or None
+                names = {a["acct"]: a["name"] for a in account.accounts(D)}
+                where, args = ("WHERE acct=?", [acct]) if acct else ("", [])
+                live = D.q(f"SELECT * FROM ge_offers {where} ORDER BY t DESC", args)
+                done = D.q(f"SELECT * FROM ge_offer_log {where} ORDER BY closed DESC LIMIT ?", args + [int(q.get("limit", 40))])
+                out = []
+                status = {"BUYING": "Working", "SELLING": "Working", "BOUGHT": "Filled", "SOLD": "Filled",
+                          "CANCELLED_BUY": "Canceled", "CANCELLED_SELL": "Canceled"}
+                for o in live:
+                    if o["state"] in ("BUYING", "SELLING"):
+                        out.append({"item": o["item"], "side": account._side(o["state"]), "status": "Working", "qty": o["total"],
+                                    "done": o["done"], "price": o["price"], "t": o["t"], "slot": o["slot"], "acct": o["acct"]})
+                for o in done:
+                    st = status.get(o["state"], o["state"])
+                    if st == "Canceled" and o["done"]:
+                        st = "Partial"
+                    out.append({"item": o["item"], "side": o["side"], "status": st, "qty": o["total"], "done": o["done"],
+                                "price": o["price"], "t": o["closed"], "slot": o["slot"], "acct": o["acct"]})
+                for r in out:
+                    m = E.mapping.get(r["item"]) or {}
+                    r["name"], r["icon"], r["acctName"] = m.get("name"), m.get("icon"), names.get(r["acct"])
+                return self._send(200, {"orders": out})
+            if path == "/api/sparks":
+                # Last day of hourly mid prices for many items in one query (list sparklines).
+                ids = [int(x) for x in (q.get("ids") or "").split(",") if x.strip().isdigit()][:200]
+                hours = max(6, min(24 * 30, int(q.get("hours", 24))))
+                hist = D.history_many(ids, int(time.time() - hours * 3600))
+                out = {}
+                for iid, rows in hist.items():
+                    pts = []
+                    for r in rows:
+                        v = [x for x in (r["ah"], r["al"]) if x]
+                        if v:
+                            pts.append([r["ts"], sum(v) / len(v)])
+                    out[iid] = pts
+                return self._send(200, {"sparks": out})
             if path == "/api/fillrates":
                 r = fills.rates(D)
                 recent = sorted(fills.measure(D), key=lambda x: -x["closed"])[:40]
