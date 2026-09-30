@@ -71,8 +71,9 @@ def statement(db, engine, cfg, since=None, now=None):
     held = {h["id"] for h in view["holdings"]}
     posts = news.feed(db, engine.mapping, days=max(1.0, (now - since) / DAY + 1), limit=100, held=held)
     out["news"] = [p for p in posts if p["t"] >= since - DAY and (p.get("held") or p["kind"] == "game")][:8]
+    shown = {p["nid"] for p in out["news"]}
     out["upcoming"] = [p for p in news.feed(db, engine.mapping, days=21, kind="upcoming", limit=50, held=held)
-                       if p.get("held")][:5]
+                       if p.get("held") and p["nid"] not in shown][:5]
     # Limits that reset since.
     resets = features.limit_resets(db, since, now)
     out["limits"] = [{"id": r["item_id"] if isinstance(r, dict) else r[0],

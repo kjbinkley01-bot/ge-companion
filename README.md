@@ -59,6 +59,8 @@ Accuracy notes:
 
 | Tab | What it does |
 | --- | --- |
+| Bank statement | What changed since you last looked: net worth and where the change came from, GE fills and completed offers, anything the offer coach flags, your biggest movers, news about what you hold, buy limits that reset, alerts, and the best ideas right now. Can also be sent to your phone every morning. |
+| Goals and income | Targets (a net worth, or an item to afford at its live price) with the date you reach them at your real pace, plus cautious and hopeful dates and what a deadline needs. Where your gp comes from per hour played (trading edge, market moves, loot, skilling and spending), loot by source, clue casket values by tier, and all your price targets. |
 | Net worth | Your whole account like a brokerage portfolio: total value live (after tax by default), changes over 24 hours, 7 and 30 days and since tracking began, value over time (with today's holdings at past prices for context), allocation by class, location and item, every holding with its share, 24h move, average cost and unrealized profit, your 8 GE slots live with fill progress and a warning when an offer is priced away from the market, recent trades and loot, and recommendations to add value (idle cash with free slots, offers that will not fill, items worth more alched, decanted, combined or split into sets, or processed, and concentration risk), each labelled exact, estimate or history. Performance against a market index with the change split into market moves, trading, loot and other (so income does not count as performance), a risk panel (typical daily swing, a bad day and a bad week, worst drawdown, beta, diversification, how much could be sold in a day, and which holdings drive the risk), and a heatmap of your holdings. Works across several accounts. |
 | Terminal | A trading desk in the style of Robinhood Legend where every panel follows one item: a watchlist (or your holdings, gainers, losers, top markets), a candle or line chart from 1 day to 2 years with moving averages, Bollinger bands, RSI, split buy and sell volume, news flags, a comparison with the market index or another item, and price lines you draw; a quote panel with suggested offers, tax, limit left and fill time; your position, cost and GE offers; key stats (1 year range, daily swing, beta); and news, how the item moved around past posts, the indicator signals firing on it now with how those signals have done historically, and your trades. Keyboard: / search, J and K move, 1 to 6 timeframe, C chart type, D price line, W watch, L layout. |
 | News | Game updates, developer blogs, polls and Jagex news, tagged with the items they mention (yours highlighted), plus an event study: how mentioned items moved beyond the market the week before, the day of, and the week and month after posts, compared with ordinary days. |
@@ -67,14 +69,14 @@ Accuracy notes:
 | Movers | Biggest gainers and losers over 1h, 6h, 24h, 7d, plus unusual volume spikes with pump and dump flags. |
 | Watchlist | Starred items with 24h sparklines, live margins and stability. |
 | Alerts | Price, profit, ROI, 1h move, rise, drop, volume, stability, spike and dump. Combine conditions with AND, point an alert at every watchlist item at once, and get desktop notifications when the tab is in the background. Buy limit resets are announced too. |
-| Flip log | Real buys and sells with profit after tax (recorded automatically from your GE trades with the plugin, first in first out, with a "Not a flip" switch for items you bought to use), an equity curve, worst drawdown, profit by day, hour and weekday, hold times, your buy and sell edge vs the market, buy limits in use, and CSV export. |
+| Flip log | Real buys and sells with profit after tax (recorded automatically from your GE trades with the plugin, first in first out, with a "Not a flip" switch for items you bought to use), strategy tags and an edge report (what works by strategy, item, price band and hold time, and whether you buy under and sell over the market), an equity curve, worst drawdown, profit by day, hour and weekday, hold times, your buy and sell edge vs the market, buy limits in use, and CSV export. |
 | Portfolio | Holdings and cash stack valued live, unrealized profit, 24h change, allocation, open flips, and an hourly net worth chart. Paste a list like `2 x Abyssal whip` to import. |
 | Money making | About 220 processing and skilling methods (including Barrows repair, bolt tipping and enchanting, and gold jewellery) priced live and ranked by GP per hour (herblore, crafting, fletching, smithing, cooking, construction and more), with buy limit caps, GP per XP, your own rates, and your own custom recipes. Item set arbitrage for about 100 sets, both combining and splitting. |
 | High alch | Profit per cast after the nature rune, GP per XP, profit per buy limit. |
 | Decanting | Cheapest dose per potion to buy and decant to 4-dose at Bob Barter, with profit per limit. |
 | Forecast | Expected flip profit per item over the next 7, 30 or 90 days, from demand (instant-buy and instant-sell volume), today's margin fading toward its usual level, and a price trend that is only used when it beat "no change" on recent days. A simulation of the item's own past good and bad days gives a likely range and the chance of a loss, plus what holding one limit would return instead. |
 | Forecast: holding outlook | For anything you hold (or any item): do its trends support keeping it, and what is it likely to be worth in 7, 30 and 90 days after tax, with a likely range and the chance it rises. Built from two years of the whole market and tested on months it never saw; it only uses trend signals that proved themselves on that test, and says plainly when none did. Also shows each item's own record and trend facts, and an outlook column on the Portfolio tab. |
-| Backtest | Replay a rule (buy the dip, buy dumps, margin flips, breakouts, RSI, moving average cross, Bollinger) over your saved hourly history: trades, win rate, returns, drawdown, equity curve, return histogram, best items, and a comparison with just holding. Plus "Do chart indicators work in OSRS?": eight classic signals replayed over the daily history after tax, against the market and a random day, and only trusted if they worked in both the older and newer half. |
+| Backtest | Paper trade any rule (a forward test on prices after you save it). Replay a rule (buy the dip, buy dumps, margin flips, breakouts, RSI, moving average cross, Bollinger) over your saved hourly history: trades, win rate, returns, drawdown, equity curve, return histogram, best items, and a comparison with just holding. Plus "Do chart indicators work in OSRS?": eight classic signals replayed over the daily history after tax, against the market and a random day, and only trusted if they worked in both the older and newer half. |
 | Account | Hiscores lookup (regular, iron, hardcore, ultimate), XP and kill count gains over time, goals with pace, ETA and the cheapest ways to get there at live prices, a drop log with loot value per boss, and dry streak odds for the items you are chasing. |
 | Item panel | Click any item: prices, tax, ROI, stability, fill time, your buy limit, break-even sell price, charts from 6 hours to 1 year, the best hour and weekday to buy and sell, items that move with it, and recipes and sets it belongs to. |
 
@@ -96,6 +98,18 @@ Accuracy notes:
   volumes for every item (730 bulk requests, one a second, in the background). The forecast
   uses it, and the Forecast tab can backtest and re-tune itself on it. Change the number of
   days in Settings, or set it to 0 to skip.
+* **Offer coach.** Flags a buy or sell that has sat unfilled while the market moved (with the
+  price that should fill and roughly how long it takes), offers priced well through the
+  market, positions now below break-even (with how often the item recovered that much within
+  a week before), and items you hold or watch that look like a pump.
+* **Your real fill rates.** Estimates start from a 20% share of the market. Once the plugin has
+  seen enough of your offers, the app measures your actual share per item and uses that.
+* **Phone.** Settings can send GE fills, alerts, coach warnings, limit resets and the daily bank
+  statement to Discord (your own webhook) or the ntfy app. It can also let your phone open the
+  dashboard on home Wi-Fi with a password.
+* **RuneLite side panel.** The plugin adds a panel showing your net worth, suggested buy and
+  sell prices for the item you have open on the GE screen, and offers that need attention.
+  It only displays information; you place every offer yourself.
 * **News.** On first start the app also reads two years of update posts from the OSRS Wiki
   (about 40 bulk requests, one a second) and then checks Jagex's news feed every 30 minutes.
   Set `news_enabled` to false in `data/config.json` to turn it off.

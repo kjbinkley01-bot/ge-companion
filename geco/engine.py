@@ -5,7 +5,10 @@ import os
 import threading
 import time
 
-from . import account, analytics, brief, coach, edge, extras, fills, news, push, targets, wealth, features, forecast, forecast_eval, hold, market, networth, recipes
+from . import (
+    account, analytics, brief, coach, edge, extras, features, fills, forecast, forecast_eval, hold,
+    market, networth, news, push, recipes, targets, wealth,
+)
 from .config import DATA_DIR
 
 log = logging.getLogger("geco")
@@ -337,9 +340,15 @@ class Engine:
         """Add an in-app notification and send it to your phone if that event is switched on."""
         now = time.time()
         if key is not None:
-            if now - self._notified.get(key, 0) < cooldown:
+            # Cooldowns survive restarts so the same warning is not repeated every launch.
+            k = json.dumps(key, default=str)
+            if not self._notified:
+                self._notified = self.db.kv_get("notified", {}) or {}
+            if now - self._notified.get(k, 0) < cooldown:
                 return False
-            self._notified[key] = now
+            self._notified[k] = now
+            self._notified = {a: b for a, b in self._notified.items() if now - b < 7 * 86400 or b > now}
+            self.db.kv_set("notified", self._notified)
         self.db.run("INSERT INTO notifications (ts, alert_id, item_id, message) VALUES (?,?,?,?)",
                     (int(now), alert_id, item_id, message))
         if event:

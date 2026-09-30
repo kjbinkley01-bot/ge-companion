@@ -521,6 +521,28 @@ svg.treemap .tm-chg { fill: var(--ink); opacity: .9; font-weight: 600; }
   .tm-price .big { font-size: 20px; }
 }
 
+/* Bank statement, coach, goals */
+.banner { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; background: var(--accent-bg); border: 1px solid var(--accent); border-radius: 12px; padding: 10px 14px; margin-bottom: 14px; }
+.statement { max-width: 1200px; }
+.st-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; flex-wrap: wrap; margin-bottom: 14px; }
+.st-total { text-align: right; }
+.coach-list { display: flex; flex-direction: column; gap: 8px; }
+.coach { border: 1px solid var(--border); border-left: 3px solid var(--muted); border-radius: 8px; padding: 8px 10px; cursor: pointer; background: var(--surface); }
+.coach.warn { border-left-color: var(--warn); }
+.coach:hover { background: var(--row-hover); }
+.coach-top { display: flex; gap: 8px; align-items: center; margin-bottom: 3px; }
+.goals { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
+.goal-top { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; }
+.goal-top img { width: 32px; height: 32px; object-fit: contain; }
+.goal-top > div { flex: 1; min-width: 0; }
+.progress.big { height: 12px; border-radius: 6px; }
+.progress.big > i { background: var(--pos); border-radius: 6px; }
+.goal-meta { display: flex; flex-direction: column; gap: 3px; margin-top: 8px; font-size: 13px; }
+.tag-sel { width: auto; padding: 2px 4px; font-size: 12px; }
+.custom-cat { padding: 4px 0; border-bottom: 1px solid var(--grid); }
+.notice.soft { background: var(--surface-2); color: var(--text-2); border-color: var(--border); }
+
 @media (max-width: 900px) {
   .grid3 { grid-template-columns: 1fr; }
 }
+.notice.warnbox { background: color-mix(in srgb, var(--warn) 14%, transparent); border-color: var(--warn); }

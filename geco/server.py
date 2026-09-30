@@ -217,7 +217,7 @@ def make_handler(app):
                 return self._send(200, {"items": rows, "unseen": unseen})
             if path == "/api/flips":
                 rows = features.flip_rows(D, E)
-                return self._send(200, {"flips": rows, "summary": features.flip_summary(rows),
+                return self._send(200, {"flips": rows, "summary": features.flip_summary(rows), "tags": edge.TAGS,
                                         "limits": features.buy_limits(D, E.mapping)})
             if path == "/api/flips.csv":
                 body = features.flips_csv(features.flip_rows(D, E))

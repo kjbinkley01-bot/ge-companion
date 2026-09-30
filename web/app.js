@@ -651,13 +651,17 @@ function drawFlips(host) {
 
 // Market overview ----------------------------------------------------------------
 const MK = Object.assign({ days: 7, cat: "runes" }, store.get("mk", {}));
-let MK_DATA = null;
+let MK_DATA = null, MK_CUSTOM = [];
 renderers.market = function (host, soft) {
   if (!soft || !$("#mkTiles", host)) {
     host.innerHTML = `<h2>Market</h2>
       <p class="lede">How the whole Grand Exchange is moving. Each index starts at 100 and tracks its items' prices weighted by gp traded (no item above 20% of its basket), so you can tell a market wide move from one item's story. Built from your saved hourly history.</p>
       <div class="tiles" id="mkTiles"></div>
-      <div class="chart-card"><div class="chart-head"><span class="title">Market heatmap</span><span class="muted small">The 200 biggest markets by gp traded, grouped by class. Click one to open it in the Terminal.</span></div><div id="mkHeat"></div></div>
+      <div class="chart-card"><div class="chart-head"><span class="title">Market heatmap</span><span class="muted small">The 200 biggest markets by gp traded. Click one to open it in the Terminal.</span>
+        <div class="seg" id="mkHeatBy">${[["class", "By class"], ["mine", "My categories"]].map(([k, l]) => `<button data-k="${k}" class="${(MK.heatBy || "class") === k ? "on" : ""}">${l}</button>`).join("")}</div></div><div id="mkHeat"></div></div>
+      <div class="card" style="margin-bottom:14px"><h3 style="margin-top:0">Your categories</h3><div id="mkCustom" class="small muted">Loading...</div>
+        <div class="inline-form"><label class="field"><span>Name</span><input class="input" id="ccName" placeholder="e.g. Barrows armour"></label>${pickerField("Add items", "ccItem")}<button class="btn primary" id="ccSave">Create index</button></div>
+        <div id="ccPicked" class="news-items"></div><div id="ccMsg" class="small"></div></div>
       <div class="chart-card">
         <div class="chart-head"><span class="title" id="mkTitle">Index</span>
           <select class="input" id="mkCat" style="width:auto"></select>
@@ -672,10 +676,30 @@ renderers.market = function (host, soft) {
     $("#mkCat", host).onchange = (e) => { MK.cat = e.target.value; store.set("mk", MK); drawIndexChart(host); };
     loadIndices(host);
   }
+  if (!soft) {
+    const picked = new Map();
+    const drawPicked = () => { $("#ccPicked", host).innerHTML = [...picked.values()].map((r) => `<button class="item-chip held" data-ccx="${r.id}">${esc(r.name)} ✕</button>`).join(""); $$("[data-ccx]", host).forEach((b) => (b.onclick = () => { picked.delete(+b.dataset.ccx); drawPicked(); })); };
+    makePicker($("#ccItem", host), $("#ccItemList", host), (r) => { picked.set(r.id, r); $("#ccItem", host).value = ""; drawPicked(); });
+    $("#ccSave", host).onclick = async () => {
+      try { await api("/api/categories/custom", { method: "POST", body: { name: $("#ccName", host).value, items: [...picked.keys()] } }); renderers.market(host, false); }
+      catch (e) { $("#ccMsg", host).innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+    };
+    $$("#mkHeatBy button", host).forEach((b) => (b.onclick = () => { MK.heatBy = b.dataset.k; store.set("mk", MK); renderers.market(host, false); }));
+    api("/api/categories/custom").then((c) => {
+      MK_CUSTOM = c.categories;
+      $("#mkCustom", host).innerHTML = c.categories.length ? c.categories.map((x) => `<div class="custom-cat"><b>${esc(x.name)}</b> <span class="muted">${esc(x.names.filter(Boolean).join(", "))}</span> <button class="btn small danger" data-ccdel="${x.cid}">Delete</button></div>`).join("") + `<p class="muted">Each gets its own index in the chart menu above.</p>` : "Group any items into your own index (for example your merch items or a gear set) to chart them against the market.";
+      $$("[data-ccdel]", host).forEach((b) => (b.onclick = async () => { await api("/api/categories/custom?cid=" + b.dataset.ccdel, { method: "DELETE" }); renderers.market(host, false); }));
+    }).catch(() => {});
+  }
   if (!soft || !$("#mkHeat svg", host)) {
-    api("/api/heatmap?n=200").then((d) => {
+    Promise.all([api("/api/heatmap?n=200"), api("/api/categories/custom")]).then(([d, cc]) => {
       const groups = {};
-      d.items.forEach((i) => { (groups[i.category] = groups[i.category] || []).push(Object.assign({}, i, { extra: `Price ${pfmt(i.price)} · 7d ${i.chg7d == null ? "-" : sgnPct(i.chg7d, 1)}` })); });
+      const mine = (MK.heatBy || "class") === "mine";
+      const memberOf = new Map(); cc.categories.forEach((c) => c.items.forEach((i) => memberOf.set(i, c.name)));
+      let items = d.items;
+      if (mine) items = items.filter((i) => memberOf.has(i.id));
+      items.forEach((i) => { const g = mine ? memberOf.get(i.id) : i.category; (groups[g] = groups[g] || []).push(Object.assign({}, i, { extra: `Price ${pfmt(i.price)} · 7d ${i.chg7d == null ? "-" : sgnPct(i.chg7d, 1)}` })); });
+      if (mine && !items.length) { $("#mkHeat", host).innerHTML = `<div class="empty">Create a category below, and its items that are among the 200 biggest markets show here.</div>`; return; }
       treemap($("#mkHeat", host), Object.entries(groups).map(([name, items]) => ({ name, items })), { height: 420, range: 0.05, valueLabel: "24h gp traded", legend: "Size: 24h gp traded. Color: 24h change.", onPick: (x) => openTerminal(x.id), aria: "Market heatmap" });
     }).catch(() => {});
   }
@@ -881,6 +905,7 @@ renderers.alerts = async function (host) {
 // Flip log -----------------------------------------------------------------------
 renderers.log = async function (host) {
   const d = await api("/api/flips");
+  S.tags = d.tags || S.tags;
   const s = d.summary;
   S.limits = d.limits || S.limits;
   const lims = Object.entries(d.limits || {}).map(([id, l]) => Object.assign({ id: +id }, l, S.byId.get(+id) ? { name: S.byId.get(+id).name, icon: S.byId.get(+id).icon } : { name: "Item " + id })).sort((a, b) => a.resetAt - b.resetAt);
@@ -897,7 +922,7 @@ renderers.log = async function (host) {
       <div class="tile"><div class="k">Edge vs market</div><div class="v small" style="font-size:14px">Buy ${edge(s.avgBuyEdge)} · Sell ${edge(s.avgSellEdge)}</div><div class="s" title="Compared with the instant prices when you logged the flip. Positive is better than the market.">vs instant prices at the time</div></div>
       <div class="tile"><div class="k">GP per hour held</div><div class="v">${s.gpPerHourHeld == null ? "-" : short(s.gpPerHourHeld)}</div><div class="s">Profit over buy-to-sell time</div></div>
     </div>
-    ${lims.length ? `<div class="card" style="margin-bottom:14px"><h3 style="margin-top:0">Buy limits in use</h3><div class="table-wrap" style="border:0"><table>${thead([{ label: "Item" }, { label: "Bought", num: 1 }, { label: "Left", num: 1 }, { label: "Resets in", num: 1 }, { label: "Resets at" }], null)}<tbody>${lims.map((l) => `<tr data-id="${l.id}"><td>${itemCell(l)}</td><td class="num">${gp(l.used)}${l.limit ? ` <span class="muted small">/ ${gp(l.limit)}</span>` : ""}</td><td class="num"><b>${l.left == null ? "-" : gp(l.left)}</b></td><td class="num">${ago(l.resetAt - Date.now() / 1000)}</td><td class="muted">${esc(fmtTime(l.resetAt))}</td></tr>`).join("")}</tbody></table></div></div>` : ""}
+    ${lims.length ? `<div class="card" style="margin-bottom:14px"><h3 style="margin-top:0">Buy limits in use</h3><div class="table-wrap" style="border:0"><table>${thead([{ label: "Item" }, { label: "Bought", num: 1 }, { label: "Left", num: 1 }, { label: "Resets in", num: 1 }, { label: "Resets at" }], null)}<tbody>${lims.map((l) => `<tr data-id="${l.id}"><td>${itemCell(l)}</td><td class="num">${gp(l.used)}${l.limit ? ` <span class="muted small">/ ${gp(l.limit)}</span>` : ""}</td><td class="num"><b>${l.left == null ? "-" : gp(l.left)}</b>${l.byAcct && l.byAcct.length > 1 ? `<div class="small muted">${l.byAcct.map((a) => `${esc(a.name || "Hand logged")}: ${a.left == null ? "-" : gp(a.left)}`).join(" · ")}</div>` : ""}</td><td class="num">${ago(l.resetAt - Date.now() / 1000)}</td><td class="muted">${esc(fmtTime(l.resetAt))}</td></tr>`).join("")}</tbody></table></div></div>` : ""}
     <div class="card" style="margin-bottom:14px"><h3 style="margin-top:0">Log a flip</h3>
       <div class="inline-form">${pickerField("Item", "flItem")}
         <label class="field"><span>Quantity</span><input class="input" id="flQty" inputmode="numeric"></label>
@@ -918,13 +943,14 @@ renderers.log = async function (host) {
       <div class="card"><h3 style="margin-top:0">How long you hold</h3>${s.closed ? `<table>${thead([{ label: "Held" }, { label: "Flips", num: 1 }, { label: "Profit", num: 1 }, { label: "Avg ROI", num: 1 }], null)}<tbody>${s.holdTimes.map((h) => `<tr class="static"><td>${esc(h.label)}</td><td class="num">${h.flips}</td><td class="num ${signCls(h.profit)}">${h.flips ? signed(h.profit, short) : "-"}</td><td class="num">${h.avgRoi == null ? "-" : pct(h.avgRoi, 2)}</td></tr>`).join("")}</tbody></table>
         ${s.best ? `<p class="small" style="margin:10px 0 0">Best flip: <b>${esc(s.best.name)}</b> <span class="pos">${signed(s.best.profit, short)}</span> · Worst: <b>${esc(s.worst.name)}</b> <span class="${signCls(s.worst.profit)}">${signed(s.worst.profit, short)}</span></p>` : ""}` : `<div class="empty">No closed flips yet.</div>`}</div>
     </div>
+    <div class="card" style="margin-top:16px"><h3 style="margin-top:0">Your edge</h3><div id="edgeBox" class="small muted">Loading...</div></div>
     <div style="display:flex;align-items:center;gap:10px;margin:18px 0 8px"><h3 style="margin:0">All flips</h3><a class="btn small" href="/api/flips.csv" style="margin-left:auto">Export CSV</a></div>
-    <div class="table-wrap">${d.flips.length ? `<table>${thead([{ label: "Item" }, { label: "Qty", num: 1 }, { label: "Bought", num: 1 }, { label: "Sold", num: 1 }, { label: "Tax each", num: 1 }, { label: "Profit", num: 1 }, { label: "ROI", num: 1 }, { label: "Edge", num: 1, title: "Buy and sell price vs the instant prices when logged; positive is better" }, { label: "Date" }, { label: "" }], null)}<tbody>${d.flips.map((f) => `
+    <div class="table-wrap">${d.flips.length ? `<table>${thead([{ label: "Item" }, { label: "Qty", num: 1 }, { label: "Bought", num: 1 }, { label: "Sold", num: 1 }, { label: "Tax each", num: 1 }, { label: "Profit", num: 1 }, { label: "ROI", num: 1 }, { label: "Edge", num: 1, title: "Buy and sell price vs the instant prices when logged; positive is better" }, { label: "Date" }, { label: "Strategy" }, { label: "" }], null)}<tbody>${d.flips.map((f) => `
       <tr data-id="${f.item_id}"><td>${itemCell(f, (f.auto ? ` <span class="tag free" title="Recorded automatically from your GE trades${f.acctName ? " on " + esc(f.acctName) : ""}">Auto</span>` : "") + (f.note ? ` <span class="muted small">${esc(f.note)}</span>` : ""))}</td><td class="num">${gp(f.qty)}</td><td class="num">${gp(f.buy_price)}</td>
       <td class="num">${f.open ? `<span class="muted">Open (now ${gp(f.livePrice)})</span>` : gp(f.sell_price)}</td><td class="num muted">${gp(f.taxEach)}</td>
       <td class="num ${signCls(f.open ? f.unrealized : f.profit)}">${f.open ? `<span title="Unrealized">${signed(f.unrealized)}*</span>` : signed(f.profit)}</td>
       <td class="num">${pct(f.roi, 2)}</td><td class="num small">${f.buyEdge == null && f.sellEdge == null ? "-" : `${edge(f.buyEdge)}${f.sellEdge != null ? " / " + edge(f.sellEdge) : ""}`}</td><td class="muted">${esc(fmtTime(f.sell_ts || f.buy_ts, true))}</td>
-      <td class="num">${f.auto ? `<button class="btn small" data-ign="${f.item_id}" data-acct="${esc(f.acct || "")}" title="Stop treating this item's trades as flips (for example gear you bought to use)">Not a flip</button>` : `${f.open ? `<button class="btn small" data-close="${f.fid}">Close</button> ` : ""}<button class="btn small danger" data-del="${f.fid}">Delete</button>`}</td></tr>`).join("")}</tbody></table>` : `<div class="empty">No flips logged yet.</div>`}</div>
+      <td><select class="input tag-sel" data-tagfid="${f.fid}"><option value="">Tag...</option>${(S.tags || []).map((t) => `<option ${f.tag === t ? "selected" : ""}>${esc(t)}</option>`).join("")}</select></td><td class="num">${f.auto ? `<button class="btn small" data-ign="${f.item_id}" data-acct="${esc(f.acct || "")}" title="Stop treating this item's trades as flips (for example gear you bought to use)">Not a flip</button>` : `${f.open ? `<button class="btn small" data-close="${f.fid}">Close</button> ` : ""}<button class="btn small danger" data-del="${f.fid}">Delete</button>`}</td></tr>`).join("")}</tbody></table>` : `<div class="empty">No flips logged yet.</div>`}</div>
     <p class="muted small">* Unrealized: what the open position would make if sold at the current instant-buy price after tax.</p>`;
   let picked = null;
   makePicker($("#flItem", host), $("#flItemList", host), (r) => { picked = r; $("#flItem", host).value = r.name; if (!$("#flQty", host).value) $("#flQty", host).value = r.limit || ""; });
@@ -940,6 +966,8 @@ renderers.log = async function (host) {
     } catch (e) { msg.innerHTML = `<span class="err">${esc(e.message)}</span>`; }
   };
   $$("[data-del]", host).forEach((b) => (b.onclick = async (e) => { e.stopPropagation(); if (!confirmInline(b)) return; await api("/api/flips?fid=" + b.dataset.del, { method: "DELETE" }); renderers.log(host); }));
+  $$("[data-tagfid]", host).forEach((sel) => { sel.onclick = (e) => e.stopPropagation(); sel.onchange = () => api("/api/flips/tag", { method: "POST", body: { fid: +sel.dataset.tagfid, tag: sel.value } }).then(() => loadEdge(host)); });
+  loadEdge(host);
   $$("[data-ign]", host).forEach((b) => (b.onclick = async (e) => { e.stopPropagation(); await api("/api/flips/ignore", { method: "POST", body: { acct: b.dataset.acct, item: +b.dataset.ign } }); renderers.log(host); }));
   $$("[data-close]", host).forEach((b) => (b.onclick = (e) => {
     e.stopPropagation();
@@ -961,6 +989,20 @@ renderers.log = async function (host) {
   barChart($("#flHour", host), s.byHour, "hour", "profit", { label: (h) => (h % 3 ? "" : hourLabel(h)), maxLabels: 24, hideEmpty: true, empty: "Close some flips to see which hours pay best.", aria: "Profit by hour", tip: (d) => `<div class="muted">${esc(hourLabel(d.hour))}</div><b class="${signCls(d.profit)}">${signed(d.profit)} gp</b><div class="muted">${d.flips} flips</div>` });
   barChart($("#flWday", host), s.byWeekday, "day", "profit", { label: (x) => x, maxLabels: 7, hideEmpty: true, empty: "Close some flips to see which days pay best.", aria: "Profit by weekday", tip: (d) => `<div class="muted">${esc(d.day)}</div><b class="${signCls(d.profit)}">${signed(d.profit)} gp</b><div class="muted">${d.flips} flips</div>` });
 };
+async function loadEdge(host) {
+  const box = $("#edgeBox", host); if (!box) return;
+  const e = await api("/api/edge?days=90").catch(() => null);
+  if (!box.isConnected) return;
+  if (!e || !e.ok) { box.textContent = (e && e.reason) || "No closed trades yet."; return; }
+  box.classList.remove("muted");
+  const tbl = (rows, label) => `<div class="tscroll"><table>${thead([{ label }, { label: "Trades", num: 1 }, { label: "Win rate", num: 1 }, { label: "Profit", num: 1 }, { label: "Avg return", num: 1 }, { label: "Per 1m gp per hour", num: 1, title: "Profit per hour for every million gp tied up: compares quick flips with slow holds fairly" }], null)}<tbody>${rows.map((g) => `<tr class="static"><td>${esc(g.key)}</td><td class="num">${gp(g.trades)}</td><td class="num">${pct(g.winRate, 0)}</td><td class="num ${signCls(g.profit)}">${signed(g.profit, short)}</td><td class="num ${signCls(g.avgRet)}">${sgnPct(g.avgRet, 2)}</td><td class="num">${g.perMillionHour == null ? "-" : signed(g.perMillionHour, short)}</td></tr>`).join("")}</tbody></table></div>`;
+  const ex = e.execution;
+  box.innerHTML = `<p class="muted" style="margin-top:0">Your last 90 days of closed trades (${gp(e.trades)}). Tag trades in the table below to compare strategies.</p>
+    ${ex.buys || ex.sells ? `<div class="kv"><span class="k" title="Your buy price against the hour's average instant-sell price: negative means you bought cheaper than the market">Buys vs market</span><span class="${signCls(-(ex.buyVsMarket || 0))}">${ex.buyVsMarket == null ? "-" : sgnPct(ex.buyVsMarket, 2)} <span class="muted">${gp(ex.buys)} fills</span></span>
+      <span class="k" title="Your sell price against the hour's average instant-buy price: positive means you sold above the market">Sells vs market</span><span class="${signCls(ex.sellVsMarket)}">${ex.sellVsMarket == null ? "-" : sgnPct(ex.sellVsMarket, 2)} <span class="muted">${gp(ex.sells)} fills</span></span></div>` : ""}
+    <div class="grid2" style="margin-top:10px"><div>${tbl(e.byTag, "Strategy")}</div><div>${tbl(e.byHold, "Held for")}</div><div>${tbl(e.byPrice, "Price band")}</div><div>${tbl(e.byAccount, "Account")}</div></div>
+    <h4>Best items</h4>${tbl(e.byItem.slice(0, 8), "Item")}${e.worstItems.length ? `<h4>Losing items</h4>${tbl(e.worstItems, "Item")}` : ""}`;
+}
 function confirmInline(btn) {
   if (btn.dataset.armed) return true;
   btn.dataset.armed = "1"; btn.textContent = "Confirm?";
@@ -1101,6 +1143,7 @@ renderers.networth = async function (host, soft) {
         <button class="btn small" id="nwRefresh" title="Read new plugin events now">Refresh</button>
       </div></div>
     ${noPlugin ? setupCard(st) : ""}
+    <div id="nwBanner"></div>
     <div class="nw-hero card">
       <div class="nw-main">
         <div class="muted small">${NW.acct ? esc((accts.find((a) => a.acct === NW.acct) || {}).name || "") : "All accounts"}${v.manualIncluded ? " plus manual additions" : ""} · valued at ${v.mode === "market" ? "mid price" : "sell price after tax"}</div>
@@ -1130,6 +1173,7 @@ renderers.networth = async function (host, soft) {
         <div id="nwAlloc"></div></div>
       <div class="card"><h3 style="margin-top:0">Recommendations</h3><div id="nwRecs"><div class="muted small">Working out what could add value...</div></div></div>
     </div>
+    <div class="card" id="nwCoachCard" style="margin-top:16px" hidden><h3 style="margin-top:0">Needs attention</h3><div id="nwCoach"></div></div>
     <div class="section-head"><h3>Grand Exchange slots</h3><span class="muted small">Live from the plugin. Offers that fill while you are logged out update at your next login.</span></div>
     <div id="nwSlots"><div class="muted small">Loading...</div></div>
     <div class="section-head"><h3>Holdings</h3><span class="muted small">${holdings.length} items. Click a row for charts and the holding outlook. * Cost is the value when the plugin first saw the item, so profit or loss counts from then.</span></div>
@@ -1151,7 +1195,7 @@ renderers.networth = async function (host, soft) {
     <div class="grid2" style="margin-top:16px">
       <div class="card"><h3 style="margin-top:0">What the plugin has seen</h3>
         <div class="tscroll"><table>${thead([{ label: "Storage" }, ...(NW.acct ? [] : [{ label: "Account" }]), { label: "Last seen" }, { label: "" }], null)}<tbody>${(v.coverage || []).map((c) => `<tr class="static"><td>${esc(c.label)}</td>${NW.acct ? "" : `<td class="muted">${esc(c.acctName || "")}</td>`}<td>${c.ok ? ago(c.age) + " ago" : `<span class="warn-txt">Not yet</span>`}</td><td class="small muted">${!c.ok && c.key === "bank" ? "Open your bank once" : c.ok && c.age > 7 * 86400 && c.key === "bank" ? "Open your bank to refresh" : ""}</td></tr>`).join("") || `<tr class="static"><td colspan="4" class="muted">No accounts yet.</td></tr>`}</tbody></table></div>
-        <p class="muted small" style="margin:10px 0 0">Storage the plugin cannot see (POH costume room, STASH units, Tackle box, other accounts without the plugin) can be added by hand in the Portfolio tab; manual additions ${v.manualIncluded ? "are" : "are not"} included in the all accounts total (change in Settings).</p></div>
+        <p class="muted small" style="margin:10px 0 0">Storage the plugin cannot see (POH costume room, STASH units, Tackle box, other accounts without the plugin) can be added on the Manual holdings tab; manual additions ${v.manualIncluded ? "are" : "are not"} included in the all accounts total (change in Settings).</p></div>
       <div class="card"><h3 style="margin-top:0">Not counted</h3>${(v.untradeable || []).length ? `<p class="muted small" style="margin-top:0">Untradeable items have no GE price, so they count as 0.</p><div class="mini-list">${v.untradeable.slice(0, 30).map((u) => `<div class="r"><span>${esc(u.name)}</span><span class="v muted">${gp(u.qty)}</span></div>`).join("")}</div>` : `<div class="muted small">Every item held has a GE price.</div>`}
         ${!noPlugin ? `<p class="muted small">Plugin folder: <code>${esc(st.folder)}</code>${st.demo ? " (demo data)" : ""}</p>` : ""}</div>
     </div>`;
@@ -1191,6 +1235,20 @@ renderers.networth = async function (host, soft) {
   ], { empty: "The chart fills in as the app records your net worth. Import daily history in Settings to see today's holdings at past prices.", aria: "Net worth over time", height: 260, tipFmt: (x) => gp(x) + " gp" });
   // Slower panels load after the page is up.
   loadPerformance(host, NW.acct, NW.range);
+  if (!soft) api("/api/statement").then((stm) => {
+    const b = $("#nwBanner", host); if (!b) return;
+    const away = (Date.now() / 1000 - (stm.lastSeen || stm.since));
+    if (!stm.lastSeen || away < 3 * 3600) return;
+    b.innerHTML = `<div class="banner"><div><b>While you were away</b> <span class="muted small">(${ago(away)})</span>: ${stm.change != null ? `<b class="${signCls(stm.change)}">${signed(stm.change, short)}</b> · ` : ""}${gp(stm.trades.fills)} GE fills${stm.coach.length ? ` · <span class="warn-txt">${stm.coach.length} need${stm.coach.length === 1 ? "s" : ""} attention</span>` : ""}</div><button class="btn small primary" id="nwOpenSt">Open your bank statement</button></div>`;
+    $("#nwOpenSt", b).onclick = () => showTab("statement");
+  }).catch(() => {});
+  api("/api/coach").then((c) => {
+    const card = $("#nwCoachCard", host); if (!card) return;
+    const items = c.items.filter((x) => !NW.acct || !x.acct || x.acct === NW.acct);
+    card.hidden = !items.length;
+    $("#nwCoach", host).innerHTML = coachList(items);
+    bindCoach(card);
+  }).catch(() => {});
   loadRisk(host, NW.acct);
   holdingsHeatmap(host, holdings);
   api("/api/slots").then((d) => {
@@ -1527,6 +1585,11 @@ async function tmCompare(tf) {
     const d = await api(`/api/marketindex?days=${f.days}`);
     return [{ name: "Market index", color: "var(--series-2)", pts: d.series }];
   }
+  if (TM.cmp === "guide") {
+    const g = await api("/api/guide?id=" + TM.id);
+    const since = Date.now() / 1000 - f.days * 86400;
+    return [{ name: "Guide price", color: "var(--series-3)", pts: g.series.filter((p) => p.t >= since - 86400) }];
+  }
   if (TM.cmp === "item" && TM.cmpId) {
     const bars = await tmHistory(TM.cmpId, tf);
     const nm = (S.byId.get(TM.cmpId) || {}).name || "Item " + TM.cmpId;
@@ -1589,7 +1652,7 @@ renderers.terminal = async function (host, soft) {
             <div class="seg" id="tmTf">${Object.keys(TF).map((k, i) => `<button data-k="${k}" class="${TM.tf === k ? "on" : ""}" title="Key ${i + 1}">${k}</button>`).join("")}</div>
             <div class="seg" id="tmType">${[["candle", "Candles"], ["line", "Line"]].map(([k, l]) => `<button data-k="${k}" class="${TM.type === k ? "on" : ""}">${l}</button>`).join("")}</div>
             <div class="chips tm-ind" id="tmInd">${IND.map(([k, l]) => `<button class="chip ${TM.ind.includes(k) ? "on" : ""}" data-k="${k}">${l}</button>`).join("")}</div>
-            <label class="tm-cmp">Compare <select class="input" id="tmCmp"><option value="none">None</option><option value="market" ${TM.cmp === "market" ? "selected" : ""}>Market index</option><option value="item" ${TM.cmp === "item" ? "selected" : ""}>${TM.cmp === "item" && TM.cmpId ? esc((S.byId.get(TM.cmpId) || {}).name || "Item") : "Another item..."}</option></select></label>
+            <label class="tm-cmp">Compare <select class="input" id="tmCmp"><option value="none">None</option><option value="market" ${TM.cmp === "market" ? "selected" : ""}>Market index</option><option value="guide" ${TM.cmp === "guide" ? "selected" : ""}>Guide price</option><option value="item" ${TM.cmp === "item" ? "selected" : ""}>${TM.cmp === "item" && TM.cmpId ? esc((S.byId.get(TM.cmpId) || {}).name || "Item") : "Another item..."}</option></select></label>
             <button class="btn small ${TM.drawing ? "primary" : ""}" id="tmDraw" title="Click the chart to add a price line (D)">Price line</button>
             <button class="btn small" id="tmClear" title="Remove this item's price lines">Clear lines</button>
           </div>
@@ -1599,7 +1662,7 @@ renderers.terminal = async function (host, soft) {
         </section>
         <aside class="tm-right panel" id="tmRight"></aside>
         <section class="tm-bottom panel">
-          <div class="seg tm-tabs" id="tmBottomTabs">${[["news", "News and events"], ["signals", "Signals"], ["trades", "Your trades"]].map(([k, l]) => `<button data-k="${k}" class="${TM.bottom === k ? "on" : ""}">${l}</button>`).join("")}</div>
+          <div class="seg tm-tabs" id="tmBottomTabs">${[["news", "News and events"], ["signals", "Signals"], ["targets", "Targets"], ["trades", "Your trades"]].map(([k, l]) => `<button data-k="${k}" class="${TM.bottom === k ? "on" : ""}">${l}</button>`).join("")}</div>
           <div id="tmBottom"></div>
         </section>
       </div>
@@ -1675,14 +1738,48 @@ function drawTmRight(host, d) {
       <span class="k">24h volume</span><span>${short(r.vol24)} <span class="muted">${r.buyPressure != null ? pct(r.buyPressure, 0) + " buys" : ""}</span></span>
       <span class="k">High alch</span><span>${gp(m.highalch)}</span>
     </div>
+    <div id="tmGuide" class="small"></div><div id="tmGuard"></div><div id="tmCoach"></div>
     <div class="tm-actions"><button class="btn small" id="tmDetails">Item details</button> <a class="btn small" href="${wikiUrl(m.name)}" target="_blank" rel="noopener">Wiki</a></div>`;
   $("#tmDetails", host).onclick = () => openItem(m.id);
+  api("/api/guide?id=" + m.id).then((g) => {
+    const el = $("#tmGuide", host); if (!el || !g.now) return;
+    const mid = r.high && r.low ? (r.high + r.low) / 2 : null;
+    el.innerHTML = `<h4>Official guide price</h4><div class="kv"><span class="k" title="Jagex's GE guide price, updated about daily. Used in game for things like item values on death.">Guide</span><span>${gp(g.now)}${mid ? ` <span class="${signCls(mid / g.now - 1)}">trades ${sgnPct(mid / g.now - 1, 1)} vs guide</span>` : ""}</span></div>`;
+  }).catch(() => {});
+  api("/api/guard?ids=" + m.id).then((g) => {
+    const x = g.items[0], el = $("#tmGuard", host); if (!el || !x) return;
+    el.innerHTML = `<div class="notice ${x.score >= 50 ? "warnbox" : "soft"}" style="margin-top:10px"><b>Manipulation check: ${x.score}/100</b> ${esc(x.level ? "(" + x.level + ")" : "")}<div class="small">${esc(x.why.join("; "))}</div></div>`;
+  }).catch(() => {});
+  api("/api/coach").then((c) => {
+    const items = c.items.filter((x) => x.item === m.id), el = $("#tmCoach", host); if (!el || !items.length) return;
+    el.innerHTML = `<h4>Offer coach</h4>` + coachList(items);
+  }).catch(() => {});
 }
 
 async function drawTmBottom(host) {
   const box = $("#tmBottom", host), d = TM_DATA && TM_DATA.d;
   if (!d) return;
   $$("#tmBottomTabs button", host).forEach((b) => b.classList.toggle("on", b.dataset.k === TM.bottom));
+  if (TM.bottom === "targets") {
+    const tg = await api("/api/targets").catch(() => ({ targets: [] }));
+    const r = d.row || {}, held = d.position ? d.position.qty : 0;
+    box.innerHTML = `<div class="grid2"><div><h4 style="margin-top:0">Set a target</h4>
+      <div class="inline-form" style="margin-top:0"><label class="field"><span>Side</span><select class="input" id="tgSide"><option value="sell">Sell when it reaches</option><option value="buy">Buy when it drops to</option></select></label>
+        <label class="field"><span>Price</span><input class="input" id="tgPrice" value="${r.high ? Math.round(r.high * 1.05) : ""}"></label>
+        <label class="field"><span>Quantity</span><input class="input" id="tgQty" value="${held || ""}" placeholder="Optional"></label>
+        <button class="btn primary" id="tgAdd">Add</button></div>
+      <h4>Or a sell ladder</h4><p class="small muted" style="margin-top:0">Splits the quantity evenly across steps above today's instant-buy price (${gp(r.high)}), so you take some profit early.</p>
+      <div class="inline-form" style="margin-top:0"><label class="field"><span>Quantity</span><input class="input" id="tgLq" value="${held || ""}"></label>
+        <label class="field"><span>Steps %</span><input class="input" id="tgSteps" value="5, 10, 15"></label><button class="btn" id="tgLadder">Add ladder</button></div>
+      <div id="tgMsg" class="small"></div></div>
+      <div><h4 style="margin-top:0">Targets for this item</h4>${targetTable(tg.targets, TM.id)}</div></div>`;
+    const done = () => drawTmBottom(host);
+    bindTargetTable(box, done);
+    const err = (e) => ($("#tgMsg", box).innerHTML = `<span class="err">${esc(e.message)}</span>`);
+    $("#tgAdd", box).onclick = () => api("/api/targets", { method: "POST", body: { item_id: TM.id, side: $("#tgSide", box).value, price: numOr($("#tgPrice", box).value, NaN), qty: numOr($("#tgQty", box).value, 0) || null } }).then(done, err);
+    $("#tgLadder", box).onclick = () => api("/api/targets", { method: "POST", body: { item_id: TM.id, side: "sell", qty: numOr($("#tgLq", box).value, 0), steps: $("#tgSteps", box).value.split(/[, ]+/).filter(Boolean).map(Number) } }).then(done, err);
+    return;
+  }
   if (TM.bottom === "trades") {
     box.innerHTML = d.fills.length ? `<table>${thead([{ label: "When" }, { label: "Side" }, { label: "Qty", num: 1 }, { label: "Each", num: 1 }, { label: "Total", num: 1 }], null)}<tbody>${d.fills.map((f) => `<tr class="static"><td class="muted">${esc(fmtTime(f.t, true))}</td><td><span class="tag ${f.side === "buy" ? "free" : "pump"}">${f.side}</span></td><td class="num">${gp(f.qty)}</td><td class="num">${gp(f.gp / f.qty)}</td><td class="num">${short(f.gp)}</td></tr>`).join("")}</tbody></table>` : `<div class="empty">No trades in this item yet. With the RuneLite plugin running, your GE trades appear here.</div>`;
     return;
@@ -1856,6 +1953,106 @@ function holdingsHeatmap(host, holdings) {
   holdings.filter((h) => h.how !== "cash" && h.value > 0).forEach((h) => { (groups[h.category] = groups[h.category] || []).push({ id: h.id, name: h.name, value: h.value, chg: h.chg24h, extra: `${gp(h.qty)} held` }); });
   treemap($("#nwHeat", host), Object.entries(groups).map(([name, items]) => ({ name, items })), { height: 300, range: 0.05, onPick: (d) => openTerminal(d.id), aria: "Holdings heatmap", legend: "Size: value held. Color: 24h change. Click to open in the Terminal." });
 }
+
+// Bank statement: what changed while you were away ---------------------------------------
+function coachList(items, opts = {}) {
+  if (!items || !items.length) return `<div class="muted small">${esc(opts.empty || "Nothing needs attention.")}</div>`;
+  return `<div class="coach-list">${items.map((c) => `<div class="coach ${c.severity}" data-cid="${c.item}">
+    <div class="coach-top"><span class="tag ${c.kind === "pump" ? "dump" : c.severity === "warn" ? "spike" : ""}">${esc({ stale_buy: "Stale buy", stale_sell: "Stale sell", overpaying: "Overpaying", underselling: "Underselling", underwater: "Below break-even", pump: "Manipulation risk" }[c.kind] || c.kind)}</span>${c.acctName ? `<span class="muted small">${esc(c.acctName)}${c.slot != null ? ` · slot ${c.slot + 1}` : ""}</span>` : ""}</div>
+    <b>${esc(c.title)}</b><div class="small muted">${esc(c.detail)}</div>
+    ${c.suggest ? `<div class="small">Suggested price: <b>${gp(c.suggest)}</b>${c.eta != null ? ` · fills in about ${c.eta < 1 ? Math.max(1, Math.round(c.eta * 60)) + " min" : c.eta.toFixed(1) + " h"}` : ""}</div>` : ""}
+  </div>`).join("")}</div>`;
+}
+function bindCoach(box) { $$("[data-cid]", box).forEach((el) => (el.onclick = () => openTerminal(+el.dataset.cid))); }
+
+renderers.statement = async function (host) {
+  host.innerHTML = `<div class="empty">Preparing your statement...</div>`;
+  let st;
+  try { st = await api("/api/statement"); } catch (e) { host.innerHTML = `<div class="notice">${esc(e.message)}</div>`; return; }
+  const since = new Date(st.since * 1000);
+  const p = st.parts || {};
+  const t = st.trades;
+  host.innerHTML = `<div class="statement">
+    <div class="st-head"><div><div class="muted small">BANK STATEMENT</div><h2 style="margin:2px 0">Since ${esc(since.toLocaleString([], { weekday: "long", hour: "numeric", minute: "2-digit" }))}</h2>
+      <div class="muted small">${st.hours < 48 ? st.hours.toFixed(0) + " hours" : (st.hours / 24).toFixed(1) + " days"} · prepared ${esc(new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }))}</div></div>
+      <div class="st-total"><div class="muted small">Net worth</div><div class="nw-total" style="font-size:30px">${short(st.total)}</div>
+      ${st.change != null ? `<div class="${signCls(st.change)}"><b>${signed(st.change, short)}</b> (${sgnPct(st.change / (st.start || 1), 2)})</div>` : `<div class="muted small">Change appears once two recordings exist.</div>`}</div></div>
+    ${st.change != null ? `<div class="card"><h3 style="margin-top:0">Where it came from</h3>${attrBars(p)}</div>` : ""}
+    <div class="grid2" style="margin-top:14px">
+      <div class="card"><h3 style="margin-top:0">Needs attention</h3>${coachList(st.coach, { empty: "All your offers and positions look fine." })}</div>
+      <div class="card"><h3 style="margin-top:0">Trading</h3>
+        <div class="kv small"><span class="k">GE fills</span><span>${gp(t.fills)}</span><span class="k">Bought</span><span>${short(t.bought)}</span><span class="k">Sold</span><span>${short(t.sold)}</span>
+        <span class="k">Flips closed</span><span>${gp(t.flips)} <span class="${signCls(t.profit)}">${t.flips ? signed(t.profit, short) : ""}</span></span></div>
+        ${t.completed.length ? `<h4>Offers completed</h4><div class="mini-list">${t.completed.map((o) => `<div class="r" data-tid="${o.item}"><span class="tag ${o.side === "buy" ? "free" : "pump"}">${o.side}</span><span>${gp(o.qty)} ${esc(o.name || "")} at ${gp(o.price)}</span><span class="v muted small">${ago(Date.now() / 1000 - o.t)} ago</span></div>`).join("")}</div>` : ""}
+      </div>
+    </div>
+    <div class="grid2" style="margin-top:14px">
+      <div class="card"><h3 style="margin-top:0">Your biggest movers</h3>${st.movers.length ? `<div class="mini-list">${st.movers.map((m) => `<div class="r" data-tid="${m.id}"><img alt="" src="${esc(iconUrl(m.icon))}" onerror="this.style.visibility='hidden'"><span>${esc(m.name)} <span class="muted small">${gp(m.qty)}</span></span><span class="v"><span class="${signCls(m.pct)}">${sgnPct(m.pct, 1)}</span> <b class="${signCls(m.gp)}">${signed(m.gp, short)}</b></span></div>`).join("")}</div>` : `<div class="muted small">No price history for this period yet.</div>`}</div>
+      <div class="card"><h3 style="margin-top:0">News about your items</h3>${st.news.length || st.upcoming.length ? `<div class="news-list">${st.news.concat(st.upcoming).slice(0, 6).map(newsCard).join("")}</div>` : `<div class="muted small">No posts mentioned what you hold.</div>`}</div>
+    </div>
+    <div class="grid2" style="margin-top:14px">
+      <div class="card"><h3 style="margin-top:0">Ideas to add value now</h3>${st.ideas.length ? st.ideas.map((r) => `<div class="rec" ${r.item ? `data-rid="${r.item}"` : ""}><div class="rec-top"><b>${esc(r.title)}</b><span class="tag conf-${r.confidence}">${CONF[r.confidence][0]}</span></div><div class="small muted">${esc(r.detail)}</div></div>`).join("") : `<div class="muted small">Nothing stands out right now.</div>`}</div>
+      <div class="card"><h3 style="margin-top:0">Limits and alerts</h3>
+        ${st.limits.length ? `<div class="small"><b>Buy limits reset:</b> ${st.limits.map((l) => esc(l.name || "Item " + l.id)).join(", ")}</div>` : `<div class="muted small">No buy limits reset.</div>`}
+        ${st.alerts.length ? `<h4>Alerts</h4><div class="small">${st.alerts.map((a) => `<div>${esc(a.message)} <span class="muted">${ago(Date.now() / 1000 - a.ts)} ago</span></div>`).join("")}</div>` : ""}</div>
+    </div></div>`;
+  bindNewsCards(host); bindCoach(host);
+  $$("[data-tid]", host).forEach((b) => (b.onclick = () => openTerminal(+b.dataset.tid)));
+  $$("[data-rid]", host).forEach((b) => (b.onclick = () => openItem(+b.dataset.rid)));
+  api("/api/statement/seen", { method: "POST" }).catch(() => {});
+};
+
+// Goals and income ---------------------------------------------------------------------
+function daysText(d) { return d == null ? "not at this pace" : d === 0 ? "reached" : d < 60 ? `${d} days` : d < 730 ? `${(d / 30.4).toFixed(1)} months` : `${(d / 365).toFixed(1)} years`; }
+renderers.goals = async function (host) {
+  host.innerHTML = `<div class="empty">Loading...</div>`;
+  let w, tg, cl;
+  try { [w, tg, cl] = await Promise.all([api("/api/wealth"), api("/api/targets"), api("/api/clues")]); } catch (e) { host.innerHTML = `<div class="notice">${esc(e.message)}</div>`; return; }
+  const G = w.goals, pc = G.pace, src = w.sources;
+  host.innerHTML = `<h2>Goals and income</h2>
+    <p class="lede">Set a target, see when you get there at your real pace, and see which of your activities actually pays. Your pace is your return on what you hold (price moves and trading) plus loot and other income, averaged over the last 30 days${pc ? `: <b class="${signCls(pc.daily)}">${sgnPct(pc.daily, 2)}</b> a day plus <b>${short(pc.income)}</b> a day of income` : ""}.</p>
+    <div class="goals">${G.goals.length ? G.goals.map((g) => `<div class="card goal">
+      <div class="goal-top">${g.icon ? `<img alt="" src="${esc(iconUrl(g.icon))}" onerror="this.style.visibility='hidden'">` : ""}<div><b>${esc(g.name)}</b><div class="muted small">${g.itemName ? `${gp(g.qty)} x ${esc(g.itemName)} at today's price` : "Net worth target"}: ${short(g.targetNow)}</div></div><button class="btn small danger" data-gdel="${g.gid}">Delete</button></div>
+      <div class="progress big"><i style="width:${Math.round((g.progress || 0) * 100)}%"></i></div>
+      <div class="goal-meta"><span><b>${pct(g.progress || 0, 1)}</b> there · ${short(Math.max(0, g.targetNow - g.current))} to go</span>
+      <span>${g.days != null || pc ? `At your pace: <b>${daysText(g.days)}</b>${g.eta ? ` (${esc(new Date(g.eta * 1000).toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" }))})` : ""}` : `<span class="muted">Needs a few days of recorded net worth</span>`}</span>
+      ${g.daysCautious != null || g.daysHopeful != null ? `<span class="muted small">Range ${daysText(g.daysHopeful)} to ${daysText(g.daysCautious)}</span>` : ""}
+      ${g.neededPerDay != null ? `<span class="small">To make your deadline: <b>${short(g.neededPerDay)}</b> a day of extra income</span>` : ""}</div></div>`).join("") : `<div class="card muted small">No goals yet. Add one below: a net worth number, or an item to afford (its target follows the live price).</div>`}</div>
+    <div class="card" style="margin-top:14px"><h3 style="margin-top:0">Add a goal</h3>
+      <div class="inline-form" style="margin-top:0">${pickerField("Item to afford (optional)", "glItem")}
+        <label class="field"><span>Quantity</span><input class="input" id="glQty" value="1"></label>
+        <label class="field"><span>Or a net worth target</span><input class="input" id="glTarget" placeholder="e.g. 2b"></label>
+        <label class="field"><span>Name</span><input class="input" id="glName" placeholder="Optional"></label>
+        <label class="field"><span>Deadline</span><input class="input" id="glDate" type="date"></label>
+        <button class="btn primary" id="glAdd">Add goal</button></div><div id="glMsg" class="small"></div></div>
+    <div class="grid2" style="margin-top:14px">
+      <div class="card"><h3 style="margin-top:0">Where your gp comes from</h3>
+        <p class="small muted" style="margin-top:0">Last ${src.days} days · ${src.hoursPlayed ? src.hoursPlayed.toFixed(1) + " hours played" : "no play sessions seen yet"}. ${esc(src.note)}</p>
+        <div class="tscroll"><table>${thead([{ label: "Source" }, { label: "Total", num: 1 }, { label: "Per hour played", num: 1 }, { label: "Per day", num: 1 }], null)}<tbody>
+        ${src.rows.map((r) => `<tr class="static" title="${esc(r.hint)}"><td>${esc(r.label)}</td><td class="num ${signCls(r.gp)}">${signed(r.gp, short)}</td><td class="num">${r.perHour == null ? "-" : signed(r.perHour, short)}</td><td class="num">${r.perDay == null ? "-" : signed(r.perDay, short)}</td></tr>`).join("")}
+        <tr class="static"><td class="muted">Realized flip profit (for reference)</td><td class="num ${signCls(src.realizedFlips)}">${signed(src.realizedFlips, short)}</td><td class="num">${src.realizedPerHour == null ? "-" : signed(src.realizedPerHour, short)}</td><td class="num"></td></tr></tbody></table></div>
+        ${src.lootSources.length ? `<h4>Loot by source</h4><div class="mini-list">${src.lootSources.map((l) => `<div class="r static"><span>${esc(l.source)} <span class="muted small">${gp(l.kills)} drops</span></span><span class="v">${short(l.gp)}</span></div>`).join("")}</div>` : ""}</div>
+      <div class="card"><h3 style="margin-top:0">Clue caskets</h3>${cl.tiers.length ? `<div class="tscroll"><table>${thead([{ label: "Tier" }, { label: "Opened", num: 1 }, { label: "Average", num: 1 }, { label: "Median", num: 1 }, { label: "Best" }], null)}<tbody>${cl.tiers.map((c) => `<tr class="static"><td><b>${esc(c.tier)}</b></td><td class="num">${gp(c.caskets)}</td><td class="num">${short(c.avg)}</td><td class="num">${short(c.median)}</td><td class="small">${c.best ? `${short(c.best.value)} <span class="muted">${esc(c.best.item || "")}</span>` : "-"}</td></tr>`).join("")}</tbody></table></div><p class="small muted">Valued at today's prices from the Loot Tracker.</p>` : `<div class="muted small">Caskets you open with the plugin running show up here with their values.</div>`}</div>
+    </div>
+    <div class="card" style="margin-top:14px"><h3 style="margin-top:0">Price targets</h3>${targetTable(tg.targets)}<p class="small muted">Add targets and sell ladders from the Terminal (Targets tab under the chart).</p></div>`;
+  let picked = null;
+  makePicker($("#glItem", host), $("#glItemList", host), (r) => { picked = r; $("#glItem", host).value = r.name; });
+  $("#glAdd", host).onclick = async () => {
+    const tgt = $("#glTarget", host).value.trim(), dt = $("#glDate", host).value;
+    try {
+      await api("/api/wealth/goals", { method: "POST", body: { item_id: picked ? picked.id : null, qty: numOr($("#glQty", host).value, 1), target: tgt ? Math.round(numOr(tgt, 0)) : null, name: $("#glName", host).value, deadline: dt ? Math.floor(new Date(dt).getTime() / 1000) : null } });
+      renderers.goals(host);
+    } catch (e) { $("#glMsg", host).innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+  };
+  $$("[data-gdel]", host).forEach((b) => (b.onclick = async () => { if (!confirmInline(b)) return; await api("/api/wealth/goals?gid=" + b.dataset.gdel, { method: "DELETE" }); renderers.goals(host); }));
+  bindTargetTable(host, () => renderers.goals(host));
+};
+function targetTable(rows, item) {
+  rows = item ? rows.filter((t) => t.item_id === item) : rows;
+  if (!rows.length) return `<div class="muted small">No targets${item ? " for this item" : ""} yet.</div>`;
+  return `<div class="tscroll"><table>${thead([{ label: "Item" }, { label: "Side" }, { label: "Target", num: 1 }, { label: "Qty", num: 1 }, { label: "Market", num: 1 }, { label: "Away", num: 1 }, { label: "" }, { label: "" }], null)}<tbody>${rows.map((t) => `<tr class="static"><td>${esc(t.name || "")}${t.ladder ? ` <span class="muted small">${esc(t.ladder)}</span>` : ""}</td><td><span class="tag ${t.side === "buy" ? "free" : "pump"}">${t.side}</span></td><td class="num">${gp(t.price)}</td><td class="num">${t.qty ? gp(t.qty) : "-"}${t.windows > 1 ? ` <span class="muted small">${t.windows} limit windows</span>` : ""}</td><td class="num">${gp(t.market)}</td><td class="num">${t.hit_at ? `<span class="pos">hit</span>` : t.distance == null ? "-" : sgnPct(t.distance, 1)}</td><td class="small muted">${t.netEach ? "nets " + gp(t.netEach) + " each" : ""}</td><td class="num"><button class="btn small danger" data-tdel="${t.tid}">Delete</button></td></tr>`).join("")}</tbody></table></div>`;
+}
+function bindTargetTable(host, after) { $$("[data-tdel]", host).forEach((b) => (b.onclick = async () => { await api("/api/targets?tid=" + b.dataset.tdel, { method: "DELETE" }); after(); })); }
 
 // Money making: recipes and item sets ---------------------------------------------
 const MM = Object.assign({ patient: true, skill: "all", hideRisky: true, q: "", setDir: "all", rates: {}, smithing: "" }, store.get("mm", {}));
@@ -2246,15 +2443,33 @@ renderers.backtest = async function (host) {
         ${f("btMinP", "Min price", "minPrice", "Any")}${f("btMaxP", "Max price", "maxPrice", "Any")}${f("btMinV", "Min 24h volume", "minVol", "Any")}${f("btShare", "Fill share %", "share")}
         <label class="field"><span>Members</span><select class="input" id="btMem"><option value="all">All</option><option value="f2p">F2P only</option><option value="p2p">Members only</option></select></label>
         <label class="check"><input type="checkbox" id="btWatch" ${BT.watchOnly ? "checked" : ""}> Watchlist only</label>
-        <button class="btn primary" id="btRun">Run backtest</button></div>
+        <button class="btn primary" id="btRun">Run backtest</button><button class="btn" id="btPaper" title="Start a forward test of these settings on prices from now on">Paper trade this rule</button></div>
       <p class="small muted" style="margin:8px 0 0">Threshold means: how far below the trailing average (dip), the 1 hour drop (dump), the minimum ROI after tax (margin), or how far above the trailing high (breakout). Volume x normal applies to dump and breakout.</p>
     </div>
+    <div class="card" id="btPaperCard" style="margin-bottom:14px"><h3 style="margin-top:0">Paper trading</h3><div id="btPaperList" class="small muted">Loading...</div></div>
     <div id="btOut"></div>
     <div class="card" id="btInd" style="margin-top:16px"><h3 style="margin-top:0">Do chart indicators work in OSRS?</h3><div class="small muted">Testing every indicator on the daily history...</div></div>`;
   $("#btMem", host).value = BT.members;
   loadIndicatorReport(host);
+  loadPaper(host);
+  $("#btPaper", host).onclick = async () => {
+    const v = (id) => $(id, host).value.trim();
+    const params = { strategy: v("#btS"), threshold: numOr(v("#btTh"), 5), hold: numOr(v("#btHold"), 6), lookback: numOr(v("#btLook"), 24), volMult: numOr(v("#btVm"), 3), minPrice: numOr(v("#btMinP"), 0), maxPrice: numOr(v("#btMaxP"), 0), minVol: numOr(v("#btMinV"), 0), share: numOr(v("#btShare"), 20) / 100, members: v("#btMem") };
+    await api("/api/paper", { method: "POST", body: { params } });
+    loadPaper(host);
+  };
   $("#btRun", host).onclick = () => runBacktest(host);
 };
+async function loadPaper(host) {
+  const box = $("#btPaperList", host); if (!box) return;
+  const d = await api("/api/paper").catch(() => null);
+  if (!box.isConnected || !d) return;
+  S.tags = d.tags;
+  box.classList.remove("muted");
+  box.innerHTML = d.rules.length ? `<p class="muted" style="margin-top:0">Each rule is tested only on prices after you saved it, so these are real forward results with no gp at risk.</p><div class="tscroll"><table>${thead([{ label: "Rule" }, { label: "Since" }, { label: "Trades", num: 1 }, { label: "Win rate", num: 1 }, { label: "Avg return", num: 1 }, { label: "Profit", num: 1 }, { label: "" }], null)}<tbody>${d.rules.filter(Boolean).map((r) => `<tr class="static"><td>${esc(r.name)}<div class="muted small">threshold ${r.params.threshold}, hold ${r.params.hold}h, lookback ${r.params.lookback}h</div></td><td class="muted">${esc(fmtTime(r.created, true))}</td><td class="num">${gp(r.trades)}</td><td class="num">${r.winRate == null ? "-" : pct(r.winRate, 0)}</td><td class="num ${signCls(r.avgRet)}">${r.avgRet == null ? "-" : sgnPct(r.avgRet, 2)}</td><td class="num ${signCls(r.profit)}">${signed(r.profit, short)}</td><td class="num"><button class="btn small danger" data-pdel="${r.pid}">Delete</button></td></tr>`).join("")}</tbody></table></div>`
+    : `Pick a rule above and press <b>Paper trade this rule</b> to test it forward on live prices.`;
+  $$("[data-pdel]", box).forEach((b) => (b.onclick = async () => { await api("/api/paper?pid=" + b.dataset.pdel, { method: "DELETE" }); loadPaper(host); }));
+}
 async function loadIndicatorReport(host) {
   const box = $("#btInd", host);
   if (!box) return;
@@ -2528,7 +2743,7 @@ renderers.settings = async function (host) {
         <div class="inline-form" style="margin-top:0">
           <label class="field wide" title="Where the Bankstanding RuneLite plugin writes its files. Blank uses the default."><span>Plugin folder</span><input class="input" id="stRl" value="${esc(cfg.runelite_folder || "")}" placeholder="Default: .runelite/bankstanding in your user folder"></label>
           <label class="field" title="Sell price after tax is what you would get listing everything at the going rate. Mid price is closer to price sites."><span>Value items at</span><select class="input" id="stNwv"><option value="sell" ${cfg.networth_value !== "market" ? "selected" : ""}>Sell price after tax</option><option value="market" ${cfg.networth_value === "market" ? "selected" : ""}>Mid price</option></select></label>
-          <label class="check"><input type="checkbox" id="stNwm" ${cfg.networth_include_manual !== false ? "checked" : ""}> Include Portfolio tab holdings in the all accounts net worth</label>
+          <label class="check"><input type="checkbox" id="stNwm" ${cfg.networth_include_manual !== false ? "checked" : ""}> Include Manual holdings in the all accounts net worth</label>
         </div>
         <div style="margin-top:12px"><button class="btn primary" id="stSave">Save</button> <span id="stMsg" class="small muted"></span></div>
       </div>
@@ -2547,6 +2762,25 @@ renderers.settings = async function (host) {
       ${st.errors.length ? `<h3>Recent problems</h3><div class="small err">${st.errors.map(esc).join("<br>")}</div>` : `<p class="small muted" style="margin-top:12px">No problems reported.</p>`}
       </div>
     </div>
+    <div class="grid2" style="margin-top:16px">
+      <div class="card"><h3 style="margin-top:0">Phone notifications</h3>
+        <p class="small muted" style="margin-top:0">Optional. Use a Discord webhook for one of your channels (Server Settings, Integrations, Webhooks), or an ntfy topic: install the ntfy app on your phone and subscribe to a long random topic name (anyone who knows the name can read it).</p>
+        <label class="field" style="margin-bottom:8px"><span>Discord webhook</span><input class="input" id="pDisc" value="${esc(cfg.push_discord_webhook || "")}" placeholder="https://discord.com/api/webhooks/..."></label>
+        <div class="inline-form" style="margin-top:0">
+          <label class="field"><span>ntfy topic</span><input class="input" id="pNtfy" value="${esc(cfg.push_ntfy_topic || "")}" placeholder="bankstanding-your-random-words"></label>
+          <label class="field"><span>ntfy server</span><input class="input" id="pNtfyS" value="${esc(cfg.push_ntfy_server || "https://ntfy.sh")}"></label>
+          <label class="field"><span>Daily statement at</span><input class="input" id="pTime" type="time" value="${esc(cfg.statement_time || "08:00")}"></label></div>
+        <div class="chips" style="margin-top:10px">${Object.entries(cfg.pushEvents || {}).map(([k, l]) => `<label class="check"><input type="checkbox" data-pev="${k}" ${(cfg.push_events || {})[k] ? "checked" : ""}> ${esc(l)}</label>`).join("")}</div>
+        <div class="inline-form"><button class="btn primary" id="pSave">Save</button><button class="btn" id="pTest">Send a test</button><span id="pMsg" class="small muted"></span></div></div>
+      <div class="card"><h3 style="margin-top:0">Open on your phone</h3>
+        <p class="small muted" style="margin-top:0">Lets your phone open the dashboard over your home Wi-Fi, protected by a password. Only turn this on at home: the connection is not encrypted. Restart the app after changing it.</p>
+        <div class="inline-form" style="margin-top:0"><label class="check"><input type="checkbox" id="lanOn" ${cfg.lan_enabled ? "checked" : ""}> Allow phones on my Wi-Fi</label>
+          <label class="field"><span>Password${cfg.lanPasswordSet ? " (set; leave blank to keep)" : ""}</span><input class="input" id="lanPw" type="password" autocomplete="new-password" placeholder="At least 8 characters"></label>
+          <button class="btn primary" id="lanSave">Save</button></div>
+        <div class="small" style="margin-top:8px">${cfg.lan_enabled ? `Open ${(cfg.lanAddresses || []).map((ip) => `<code>http://${esc(ip)}:${location.port || 80}</code>`).join(" or ")} on your phone.` : "Currently off."}</div>
+        <div id="lanMsg" class="small"></div>
+        <h3>Your fill rates</h3><div id="frBox" class="small muted">Loading...</div></div>
+    </div>
     <p class="small muted" style="margin-top:16px">Prices come from the OSRS Wiki real-time prices API (data provided by RuneLite users). They're strong estimates, not guarantees: price check in game before big flips.</p>`;
   $("#stSave", host).onclick = async () => {
     const v = (id) => $(id, host).value;
@@ -2556,6 +2790,27 @@ renderers.settings = async function (host) {
       loadMarket();
     } catch (e) { $("#stMsg", host).innerHTML = `<span class="err">${esc(e.message)}</span>`; }
   };
+  const pushBody = () => ({ push_discord_webhook: $("#pDisc", host).value, push_ntfy_topic: $("#pNtfy", host).value, push_ntfy_server: $("#pNtfyS", host).value, statement_time: $("#pTime", host).value, push_events: Object.fromEntries($$("[data-pev]", host).map((c) => [c.dataset.pev, c.checked])) });
+  $("#pSave", host).onclick = async () => { try { await api("/api/settings", { method: "POST", body: pushBody() }); $("#pMsg", host).textContent = "Saved."; } catch (e) { $("#pMsg", host).innerHTML = `<span class="err">${esc(e.message)}</span>`; } };
+  $("#pTest", host).onclick = async () => {
+    try { await api("/api/settings", { method: "POST", body: pushBody() }); const r = await api("/api/push/test", { method: "POST" }); $("#pMsg", host).innerHTML = r.results.map((x) => `${esc(x.service)}: <span class="${x.ok ? "pos" : "err"}">${esc(x.ok ? "sent" : x.detail)}</span>`).join(" · "); }
+    catch (e) { $("#pMsg", host).innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+  };
+  $("#lanSave", host).onclick = async () => {
+    try { await api("/api/settings", { method: "POST", body: { lan_enabled: $("#lanOn", host).checked, lan_password: $("#lanPw", host).value } }); $("#lanMsg", host).innerHTML = `<span class="pos">Saved. Restart the app (close the window and run start.bat) for it to apply.</span>`; }
+    catch (e) { $("#lanMsg", host).innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+  };
+  api("/api/fillrates").then((fr) => {
+    const box = $("#frBox", host); if (!box) return;
+    box.classList.remove("muted");
+    box.innerHTML = `<p class="muted" style="margin-top:0">Measured from your own GE offers: the share of the market's volume you got while an offer was open (only offers priced near the market). Used per item once an item has 3 measured offers, and overall after 8.</p>
+      <div class="kv"><span class="k">Your share overall</span><span><b>${fr.overall == null ? "not enough offers yet" : pct(fr.overall, 1)}</b> <span class="muted">${gp(fr.n)} offers measured</span></span>
+      <span class="k">Buys / sells</span><span>${fr.sides.buy == null ? "-" : pct(fr.sides.buy, 1)} / ${fr.sides.sell == null ? "-" : pct(fr.sides.sell, 1)}</span>
+      <span class="k">Setting used otherwise</span><span>${pct(fr.setting, 0)}</span></div>
+      <label class="check" style="margin-top:8px"><input type="checkbox" id="frUse" ${fr.useMeasured ? "checked" : ""}> Use my measured rates in the flip finder and planner</label>
+      ${fr.items.length ? `<div class="tscroll" style="margin-top:8px"><table>${thead([{ label: "Item" }, { label: "Your share", num: 1 }, { label: "Offers", num: 1 }], null)}<tbody>${fr.items.slice(0, 12).map((i) => `<tr class="static"><td>${esc(i.name || "")}</td><td class="num">${pct(i.share, 1)}</td><td class="num">${i.n}</td></tr>`).join("")}</tbody></table></div>` : ""}`;
+    $("#frUse", host).onchange = async (e) => { await api("/api/settings", { method: "POST", body: { fill_share_measured: e.target.checked } }); loadMarket(); };
+  }).catch(() => {});
   $("#stBackup", host).onclick = async () => {
     try { const r = await api("/api/backup", { method: "POST" }); $("#stBkMsg", host).textContent = "Saved " + r.file; }
     catch (e) { $("#stBkMsg", host).innerHTML = `<span class="err">${esc(e.message)}</span>`; }

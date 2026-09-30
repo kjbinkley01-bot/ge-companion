@@ -23,7 +23,9 @@
 </header>
 <nav class="sidenav" id="tabs" aria-label="Sections">
   <div class="nav-sec"><div class="nav-h">Portfolio</div>
+    <button data-tab="statement" title="Bank statement"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h14v18l-3-2-2 2-2-2-2 2-2-2-3 2z M8 8h8 M8 12h8 M8 16h5"/></svg><span>Bank statement</span></button>
     <button data-tab="networth" title="Net worth"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9v9z M12 3a9 9 0 0 1 9 9h-9"/></svg><span>Net worth</span></button>
+    <button data-tab="goals" title="Goals and income"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z M12 17a5 5 0 1 0 0-10 5 5 0 0 0 0 10z M12 13a1 1 0 1 0 0-2 1 1 0 0 0 0 2z"/></svg><span>Goals and income</span></button>
     <button data-tab="portfolio" title="Manual holdings"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 8h18v12H3z M8 8V5h8v3 M3 13h18"/></svg><span>Manual holdings</span></button>
     <button data-tab="log" title="Flip log"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6h11 M9 12h11 M9 18h11 M4 6h.01 M4 12h.01 M4 18h.01"/></svg><span>Flip log</span></button>
   </div>
@@ -55,7 +57,9 @@
 </nav>
 <div id="navScrim" class="scrim nav-scrim" hidden></div>
 <main>
+  <section id="tab-statement" class="tab" hidden></section>
   <section id="tab-networth" class="tab" hidden></section>
+  <section id="tab-goals" class="tab" hidden></section>
   <section id="tab-terminal" class="tab" hidden></section>
   <section id="tab-flips" class="tab"></section>
   <section id="tab-market" class="tab" hidden></section>

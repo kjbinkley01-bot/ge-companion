@@ -50,6 +50,8 @@ A free alternative to GE Tracker premium, built only on public, read-only data.
   state, item, price, total, done, spent: cumulative), container (bank, inventory, equipment,
   looting_bag, seed_vault, rune_pouch, death_storage, ge_collect_0..7; items as [[id, qty]],
   noted ids canonicalized), loot, xp. JUnit tests: `gradle test` in that folder.
+  Side panel (display only): polls `/api/plugin/summary` on the app (config `appUrl`) every 30
+  seconds and when the GE offer item (varp TRADINGPOST_SEARCH) changes.
 * `geco/account.py`: ingests plugin files incrementally (byte offsets, whole lines only), keeps
   latest GE offers, reconstructs fills from cumulative offer changes, FIFO matches them into
   automatic flip log rows (`flips.source='auto'`, rebuilt each time; `flip_ignore` opts out).
@@ -77,6 +79,30 @@ A free alternative to GE Tracker premium, built only on public, read-only data.
 * `geco/indicators.py`: SMA, EMA, RSI, Bollinger, and a report replaying 8 daily signals over
   the history (7 and 30 day moves after tax, beyond the market and a random day control,
   split into older and newer halves). The hourly backtester also has rsi, ma_cross, bollinger.
+* `geco/fills.py`: your real fill share. `account` logs every offer from open to finish in
+  `ge_offer_log`; share = filled / market volume on that side while open (m5, else h1), only
+  offers within 2% of the market. Median per item (3+ offers) or overall (8+) feeds
+  `market.build_market(share_fn=...)` when `fill_share_measured`. Buy limits are per account.
+* `geco/coach.py`: stale buys and sells (suggested price, fill time), offers through the
+  market, positions below break-even (with the item's own recovery odds), pump warnings.
+* `geco/brief.py`: the Bank statement (changes since last visit: attribution, fills, coach,
+  movers, news about holdings, limit resets, alerts, ideas) and its phone text version.
+* `geco/push.py`: optional Discord webhook and ntfy notifications, per event type. Engine
+  `notify()` stores in-app notifications and pushes; cooldown keys persist in kv.
+* `geco/wealth.py`: wealth goals (projection from TWR plus income, cautious and hopeful dates)
+  and gp sources per hour played (`sessions` table from login, logout and 20 minute gaps).
+* `geco/edge.py`: edge report by strategy tag, account, item, price band, hold time, and
+  execution vs the hour's average prices. Tags for auto rows live in `trade_tags` keyed by
+  (acct, item, buy_ts) so they survive `sync_flips`. Paper rules = backtest restricted to
+  entries after the rule was saved.
+* `geco/targets.py`: price targets and sell ladders, checked after each price refresh.
+* `geco/guard.py`: manipulation score (sharp rise vs class, volume burst, thin market, spread,
+  lopsided flow, above 90 day range).
+* `geco/extras.py`: official guide prices (Jagex itemdb graph, per item on demand, cached 6h),
+  clue casket values from loot, custom index categories (also in `analytics.indices`).
+* Server security: `_allowed` accepts only loopback with a local Host header, or LAN clients
+  with the Basic auth password when `lan_enabled` (then it binds 0.0.0.0). Non GET requests
+  must not come from another Origin.
 * `geco/demo_feed.py`: writes plugin format events in demo mode (`data/demo-runelite`).
 * `geco/server.py`: JSON API plus static files, bound to 127.0.0.1.
 * `web/`: vanilla JS dashboard (`app.js`), no build step. Sectioned side menu (collapsible to
@@ -117,7 +143,11 @@ allocation, live GE slots, recommendations), automatic flip log from real trades
 v4: Terminal (linked workspace, candles, indicators, compare, price lines, news flags), News
 tab with an event study, performance vs a market index with return attribution, risk panel,
 holdings and market heatmaps, indicator report, Legend style theme.
+v5: renamed Bankstanding; side menu; Bank statement; offer coach; measured fill rates and per
+account limits; phone notifications and LAN mode; goals and income; edge report, strategy
+tags, paper trading; price targets and ladders; manipulation guard; guide prices; clue
+values; custom categories; RuneLite side panel.
 Open questions to verify in game: whether a sell offer's `spent` is before or after tax
 (`account.sell_split` handles both), and how promptly collection box containers update.
 Hiscores response format verified against the live endpoint (Sep 2026).
-Next: guide price tracking, clue reward values, custom index categories.
+Next: verify the open questions in game, then consider Plugin Hub submission.
