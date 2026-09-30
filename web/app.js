@@ -870,7 +870,7 @@ renderers.log = async function (host) {
   const lims = Object.entries(d.limits || {}).map(([id, l]) => Object.assign({ id: +id }, l, S.byId.get(+id) ? { name: S.byId.get(+id).name, icon: S.byId.get(+id).icon } : { name: "Item " + id })).sort((a, b) => a.resetAt - b.resetAt);
   const edge = (v) => v == null ? "-" : `<span class="${signCls(v)}">${v > 0 ? "+" : ""}${pct(v, 2)}</span>`;
   host.innerHTML = `<h2>Flip log</h2>
-    <p class="lede">Record what you actually bought and sold to track real profit after tax. Open flips (no sell price yet) are valued at the current instant-buy price. Buys you log here also count against the item's GE buy limit, so the flip finder and planner show what you have left.</p>
+    <p class="lede">With the RuneLite plugin running, every GE trade is recorded here on its own (marked Auto, buys matched to sells first in, first out). You can also record trades by hand to track real profit after tax. Open flips (no sell price yet) are valued at the current instant-buy price. Buys you log here also count against the item's GE buy limit, so the flip finder and planner show what you have left.</p>
     <div class="tiles">
       <div class="tile"><div class="k">Realized profit</div><div class="v ${signCls(s.realized)}">${signed(s.realized, short)}</div><div class="s">${s.closed} closed flips</div></div>
       <div class="tile"><div class="k">Win rate</div><div class="v">${s.winRate == null ? "-" : pct(s.winRate, 0)}</div><div class="s">Avg ROI ${pct(s.avgRoi, 2)} · best run ${s.bestStreak}</div></div>
@@ -904,11 +904,11 @@ renderers.log = async function (host) {
     </div>
     <div style="display:flex;align-items:center;gap:10px;margin:18px 0 8px"><h3 style="margin:0">All flips</h3><a class="btn small" href="/api/flips.csv" style="margin-left:auto">Export CSV</a></div>
     <div class="table-wrap">${d.flips.length ? `<table>${thead([{ label: "Item" }, { label: "Qty", num: 1 }, { label: "Bought", num: 1 }, { label: "Sold", num: 1 }, { label: "Tax each", num: 1 }, { label: "Profit", num: 1 }, { label: "ROI", num: 1 }, { label: "Edge", num: 1, title: "Buy and sell price vs the instant prices when logged; positive is better" }, { label: "Date" }, { label: "" }], null)}<tbody>${d.flips.map((f) => `
-      <tr data-id="${f.item_id}"><td>${itemCell(f, f.note ? ` <span class="muted small">${esc(f.note)}</span>` : "")}</td><td class="num">${gp(f.qty)}</td><td class="num">${gp(f.buy_price)}</td>
+      <tr data-id="${f.item_id}"><td>${itemCell(f, (f.auto ? ` <span class="tag free" title="Recorded automatically from your GE trades${f.acctName ? " on " + esc(f.acctName) : ""}">Auto</span>` : "") + (f.note ? ` <span class="muted small">${esc(f.note)}</span>` : ""))}</td><td class="num">${gp(f.qty)}</td><td class="num">${gp(f.buy_price)}</td>
       <td class="num">${f.open ? `<span class="muted">Open (now ${gp(f.livePrice)})</span>` : gp(f.sell_price)}</td><td class="num muted">${gp(f.taxEach)}</td>
       <td class="num ${signCls(f.open ? f.unrealized : f.profit)}">${f.open ? `<span title="Unrealized">${signed(f.unrealized)}*</span>` : signed(f.profit)}</td>
       <td class="num">${pct(f.roi, 2)}</td><td class="num small">${f.buyEdge == null && f.sellEdge == null ? "-" : `${edge(f.buyEdge)}${f.sellEdge != null ? " / " + edge(f.sellEdge) : ""}`}</td><td class="muted">${esc(fmtTime(f.sell_ts || f.buy_ts, true))}</td>
-      <td class="num">${f.open ? `<button class="btn small" data-close="${f.fid}">Close</button> ` : ""}<button class="btn small danger" data-del="${f.fid}">Delete</button></td></tr>`).join("")}</tbody></table>` : `<div class="empty">No flips logged yet.</div>`}</div>
+      <td class="num">${f.auto ? `<button class="btn small" data-ign="${f.item_id}" data-acct="${esc(f.acct || "")}" title="Stop treating this item's trades as flips (for example gear you bought to use)">Not a flip</button>` : `${f.open ? `<button class="btn small" data-close="${f.fid}">Close</button> ` : ""}<button class="btn small danger" data-del="${f.fid}">Delete</button>`}</td></tr>`).join("")}</tbody></table>` : `<div class="empty">No flips logged yet.</div>`}</div>
     <p class="muted small">* Unrealized: what the open position would make if sold at the current instant-buy price after tax.</p>`;
   let picked = null;
   makePicker($("#flItem", host), $("#flItemList", host), (r) => { picked = r; $("#flItem", host).value = r.name; if (!$("#flQty", host).value) $("#flQty", host).value = r.limit || ""; });
@@ -924,6 +924,7 @@ renderers.log = async function (host) {
     } catch (e) { msg.innerHTML = `<span class="err">${esc(e.message)}</span>`; }
   };
   $$("[data-del]", host).forEach((b) => (b.onclick = async (e) => { e.stopPropagation(); if (!confirmInline(b)) return; await api("/api/flips?fid=" + b.dataset.del, { method: "DELETE" }); renderers.log(host); }));
+  $$("[data-ign]", host).forEach((b) => (b.onclick = async (e) => { e.stopPropagation(); await api("/api/flips/ignore", { method: "POST", body: { acct: b.dataset.acct, item: +b.dataset.ign } }); renderers.log(host); }));
   $$("[data-close]", host).forEach((b) => (b.onclick = (e) => {
     e.stopPropagation();
     const f = d.flips.find((x) => x.fid === +b.dataset.close);
@@ -1019,6 +1020,193 @@ renderers.portfolio = async function (host) {
   $$("[data-hdel]", host).forEach((b) => (b.onclick = async (e) => { e.stopPropagation(); if (!confirmInline(b)) return; await api("/api/holdings?hid=" + b.dataset.hdel, { method: "DELETE" }); renderers.portfolio(host); }));
   bindRowClicks(host);
 };
+
+// Net worth: live account value from the RuneLite plugin ----------------------------
+const NW = Object.assign({ acct: "", range: "30", group: "category", show: 50, sort: { key: "value", dir: "desc" } }, store.get("nw", {}));
+NW.show = 50;
+const NW_RANGES = [["1", "1D"], ["7", "7D"], ["30", "1M"], ["90", "3M"], ["365", "1Y"], ["all", "All"]];
+const CONF = {
+  exact: ["Exact", "Arithmetic on live prices, after tax. Prices can move before you act."],
+  estimate: ["Estimate", "Depends on offers filling or on an assumption stated in the text."],
+  history: ["History", "Describes what has happened before. Not a prediction."],
+  data: ["Data", "Your net worth is incomplete or estimated until you do this."],
+};
+const REC_GROUPS = [["data", "Complete the picture"], ["trading", "Trading"], ["value", "Add value to what you hold"], ["risk", "Risk"]];
+const SLOT_STATE = { BUYING: "Buying", SELLING: "Selling", BOUGHT: "Bought", SOLD: "Sold", CANCELLED_BUY: "Cancelled", CANCELLED_SELL: "Cancelled", EMPTY: "Empty" };
+function chgPill(label, c) {
+  if (!c) return `<div class="nw-chg"><span class="k">${label}</span><span class="muted">-</span></div>`;
+  return `<div class="nw-chg"><span class="k">${label}</span><span class="${signCls(c.gp)}">${signed(c.gp, short)} <small>(${c.pct > 0 ? "+" : ""}${pct(c.pct, 2)})</small></span></div>`;
+}
+function allocRows(rows, key, total, colors) {
+  if (!rows.length) return `<div class="empty">Nothing yet.</div>`;
+  return `<div class="alloc-bar">${rows.map((r, i) => `<i style="width:${Math.max(0.4, (r.value / (total || 1)) * 100)}%;background:${colors[i % colors.length]}" title="${esc(r[key])}: ${pct(r.value / (total || 1), 1)}"></i>`).join("")}</div>
+    <div class="alloc-list">${rows.map((r, i) => `<div class="r"><i style="background:${colors[i % colors.length]}"></i><span>${esc(r[key])}${r.seen ? ` <span class="muted small" title="Last seen by the plugin">${ago(Date.now() / 1000 - r.seen)} ago</span>` : ""}</span><span class="v">${short(r.value)}</span><span class="p muted">${pct(r.value / (total || 1), 1)}</span></div>`).join("")}</div>`;
+}
+const ALLOC_COLORS = ["var(--series-1)", "var(--series-2)", "var(--series-3)", "#9a6fd6", "#d6a72c", "#4bb3c8", "#c8577e", "#7f9c3c", "#8a8f98", "#5d6fd1"];
+
+function slotCard(s) {
+  if (s.state === "EMPTY") return `<div class="slot empty-slot"><div class="muted small">Slot ${s.slot + 1}</div><div class="muted">Empty</div></div>`;
+  const active = s.state === "BUYING" || s.state === "SELLING";
+  const mk = s.side === "buy" ? s.market_low : s.market_high;
+  const diff = mk && s.price ? s.price / mk - 1 : null;
+  return `<div class="slot ${s.side} ${s.note ? "warn" : ""}" data-id="${s.item}">
+    <div class="slot-top"><span class="tag ${s.side === "buy" ? "free" : "pump"}">${esc(s.side === "buy" ? "Buy" : "Sell")}</span><span class="muted small">Slot ${s.slot + 1} · ${esc(SLOT_STATE[s.state] || s.state)}</span></div>
+    ${itemCell(s)}
+    <div class="kv small"><span class="k">Price</span><span>${gp(s.price)}${diff != null ? ` <span class="${s.side === "buy" ? signCls(-diff) : signCls(diff)} small" title="Compared with the current ${s.side === "buy" ? "instant-sell" : "instant-buy"} price">${diff > 0 ? "+" : ""}${pct(diff, 1)} vs market</span>` : ""}</span>
+      <span class="k">Filled</span><span>${gp(s.done)} / ${gp(s.total)}</span>
+      ${active && s.idle != null ? `<span class="k">Last fill</span><span>${ago(s.idle)} ago</span>` : ""}</div>
+    <div class="progress"><i style="width:${Math.round((s.progress || 0) * 100)}%"></i></div>
+    ${s.note ? `<div class="small warn-txt">${esc(s.note)}</div>` : ""}
+  </div>`;
+}
+
+renderers.networth = async function (host, soft) {
+  let st, v;
+  try {
+    st = await api("/api/account/status");
+    v = await api(`/api/networth?acct=${encodeURIComponent(NW.acct)}&days=${NW.range}`);
+  } catch (e) { host.innerHTML = `<div class="notice">${esc(e.message)}</div>`; return; }
+  const accts = v.accountList || [];
+  if (NW.acct && !accts.some((a) => a.acct === NW.acct)) { NW.acct = ""; store.set("nw", NW); }
+  const noPlugin = !accts.length;
+  const ch = v.changes || {};
+  const holdings = v.holdings || [];
+  const scrollY = soft ? window.scrollY : null;
+  const cols = [{ sort: "name", label: "Item" }, { sort: "qty", label: "Qty", num: 1 }, { sort: "each", label: "Price", num: 1, title: v.mode === "market" ? "Mid price" : "Instant-buy price after tax" },
+    { sort: "value", label: "Value", num: 1 }, { sort: "share", label: "Share" }, { sort: "chg24h", label: "24h", num: 1 }, { sort: "chg24gp", label: "24h gp", num: 1 },
+    { sort: "costEach", label: "Avg cost", num: 1, title: "Average price paid for units bought on the GE while the plugin was running (first in, first out)" },
+    { sort: "pnl", label: "Unrealized", num: 1, title: "Value now minus what you paid, for units with a known cost" }, { sort: "category", label: "Class" }, { label: "Where" }];
+  const rows = sortRows(holdings, NW.sort.key, NW.sort.dir);
+  const where = (w) => Object.entries(w).map(([k, q]) => `${esc(({ bank: "Bank", inventory: "Inv", equipment: "Worn", ge: "GE", rune_pouch: "Pouch", looting_bag: "Bag", seed_vault: "Vault", death_storage: "Death", manual: "Manual" })[k] || k)}${Object.keys(w).length > 1 ? " " + short(q) : ""}`).join(", ");
+  const lastEvent = st.live && st.live.last;
+  host.innerHTML = `<div class="section-head" style="margin-top:0"><h2 style="margin:0">Net worth</h2>
+      <div class="right">
+        <div class="chips" style="margin:0">${[["", "All accounts"]].concat(accts.map((a) => [a.acct, a.name || "Unnamed"])).map(([k, n]) => `<button class="chip ${NW.acct === k ? "on" : ""}" data-acct="${esc(k)}">${k ? `<span class="dot-s ${accts.find((a) => a.acct === k).online ? "on" : ""}"></span>` : ""}${esc(n)}</button>`).join("")}</div>
+        <button class="btn small" id="nwRefresh" title="Read new plugin events now">Refresh</button>
+      </div></div>
+    ${noPlugin ? setupCard(st) : ""}
+    <div class="nw-hero card">
+      <div class="nw-main">
+        <div class="muted small">${NW.acct ? esc((accts.find((a) => a.acct === NW.acct) || {}).name || "") : "All accounts"}${v.manualIncluded ? " plus manual additions" : ""} · valued at ${v.mode === "market" ? "mid price" : "sell price after tax"}</div>
+        <div class="nw-total">${gp(v.total)} <span class="unit">gp</span></div>
+        <div class="nw-sub"><span>${short(v.total)}</span>${lastEvent ? `<span class="muted small">Updated ${ago(Date.now() / 1000 - lastEvent)} ago from RuneLite</span>` : ""}</div>
+        <div class="nw-chgs">${chgPill("24h", ch.d1)}${chgPill("7 days", ch.d7)}${chgPill("30 days", ch.d30)}${chgPill("Since tracking began", ch.all)}</div>
+      </div>
+      <div class="nw-side kv">
+        <span class="k">Cash</span><span>${short(v.cash)} <span class="muted small">${pct(v.total ? v.cash / v.total : 0, 0)}</span></span>
+        <span class="k">Items</span><span>${short(v.items)}</span>
+        <span class="k">In the GE</span><span>${short(v.ge)}${v.geEstimated ? ` <span class="tag stale" title="Some collection boxes were not seen since the last trade, so they are estimated from the offer">est</span>` : ""}</span>
+        <span class="k" title="How much today's price moves changed your item value (Wiki 24h change)">Market move today</span><span class="${signCls(v.chg24market)}">${signed(v.chg24market, short)}</span>
+        <span class="k" title="Value now minus cost, for items bought on the GE while tracked">Unrealized P/L</span><span class="${signCls(v.pnl)}">${v.pnl ? signed(v.pnl, short) : "-"}</span>
+      </div>
+    </div>
+    <div class="chart-card"><div class="chart-head"><span class="title">Portfolio value</span>
+      <div class="seg">${NW_RANGES.map(([k, l]) => `<button data-range="${k}" class="${NW.range === k ? "on" : ""}">${l}</button>`).join("")}</div></div>
+      <div id="nwChart"></div>
+      <p class="muted small" style="margin:6px 0 0">Solid: your recorded net worth (every 5 minutes while the app runs). Dashed: what today's holdings would have been worth at past prices, for context before tracking began. It is not your real history.</p></div>
+    <div class="grid2">
+      <div class="card"><div class="section-head" style="margin-top:0"><h3>Allocation</h3><div class="right"><div class="seg" style="margin:0">${[["category", "By class"], ["container", "By location"], ["item", "Top items"]].map(([k, l]) => `<button data-group="${k}" class="${NW.group === k ? "on" : ""}">${l}</button>`).join("")}</div></div></div>
+        <div id="nwAlloc"></div></div>
+      <div class="card"><h3 style="margin-top:0">Recommendations</h3><div id="nwRecs"><div class="muted small">Working out what could add value...</div></div></div>
+    </div>
+    <div class="section-head"><h3>Grand Exchange slots</h3><span class="muted small">Live from the plugin. Offers that fill while you are logged out update at your next login.</span></div>
+    <div id="nwSlots"><div class="muted small">Loading...</div></div>
+    <div class="section-head"><h3>Holdings</h3><span class="muted small">${holdings.length} items. Click a row for charts and the holding outlook.</span></div>
+    <div class="table-wrap">${holdings.length ? `<table>${thead(cols, NW.sort)}<tbody>${rows.slice(0, NW.show).map((h) => `
+      <tr data-id="${h.id}"><td>${itemCell(h, h.how !== "sell" && h.how !== "cash" && h.how !== "market" ? ` <span class="tag stale" title="How this item was priced">${esc(h.how)}</span>` : "")}</td>
+      <td class="num">${gp(h.qty)}</td><td class="num">${h.how === "cash" ? "-" : gp(h.each)}</td><td class="num"><b>${short(h.value)}</b></td>
+      <td class="small"><span class="share" style="width:${Math.max(2, Math.round(h.share * 80))}px"></span>${pct(h.share, h.share < 0.01 ? 2 : 1)}</td>
+      <td class="num ${signCls(h.chg24h)}">${h.chg24h == null || h.how === "cash" ? "-" : (h.chg24h > 0 ? "+" : "") + pct(h.chg24h)}</td>
+      <td class="num ${signCls(h.chg24gp)}">${h.chg24gp ? signed(h.chg24gp, short) : "-"}</td>
+      <td class="num">${h.costEach == null ? "-" : gp(h.costEach)}</td>
+      <td class="num ${signCls(h.pnl)}">${h.pnl == null ? "-" : signed(h.pnl, short)}</td>
+      <td class="small muted">${esc(h.category || "")}</td><td class="small muted">${where(h.where)}</td></tr>`).join("")}
+      ${rows.length > NW.show ? `<tr class="static"><td colspan="${cols.length}" class="more-row"><button class="btn small" id="nwMore">Show all ${rows.length}</button></td></tr>` : ""}</tbody></table>`
+      : `<div class="empty">${noPlugin ? "No account data yet. Set up the RuneLite plugin above, or add holdings by hand in the Portfolio tab." : "Nothing held yet. Open your bank in game so the plugin can see it."}</div>`}</div>
+    <div class="grid2" style="margin-top:16px">
+      <div class="card"><h3 style="margin-top:0">Recent GE trades</h3><div id="nwFills" class="muted small">Loading...</div></div>
+      <div class="card"><h3 style="margin-top:0">Recent loot</h3><div id="nwLoot" class="muted small">Loading...</div></div>
+    </div>
+    <div class="grid2" style="margin-top:16px">
+      <div class="card"><h3 style="margin-top:0">What the plugin has seen</h3>
+        <table>${thead([{ label: "Storage" }, ...(NW.acct ? [] : [{ label: "Account" }]), { label: "Last seen" }, { label: "" }], null)}<tbody>${(v.coverage || []).map((c) => `<tr class="static"><td>${esc(c.label)}</td>${NW.acct ? "" : `<td class="muted">${esc(c.acctName || "")}</td>`}<td>${c.ok ? ago(c.age) + " ago" : `<span class="warn-txt">Not yet</span>`}</td><td class="small muted">${!c.ok && c.key === "bank" ? "Open your bank once" : c.ok && c.age > 7 * 86400 && c.key === "bank" ? "Open your bank to refresh" : ""}</td></tr>`).join("") || `<tr class="static"><td colspan="4" class="muted">No accounts yet.</td></tr>`}</tbody></table>
+        <p class="muted small" style="margin:10px 0 0">Storage the plugin cannot see (POH costume room, STASH units, Tackle box, other accounts without the plugin) can be added by hand in the Portfolio tab; manual additions ${v.manualIncluded ? "are" : "are not"} included in the all accounts total (change in Settings).</p></div>
+      <div class="card"><h3 style="margin-top:0">Not counted</h3>${(v.untradeable || []).length ? `<p class="muted small" style="margin-top:0">Untradeable items have no GE price, so they count as 0.</p><div class="mini-list">${v.untradeable.slice(0, 30).map((u) => `<div class="r"><span>${esc(u.name)}</span><span class="v muted">${gp(u.qty)}</span></div>`).join("")}</div>` : `<div class="muted small">Every item held has a GE price.</div>`}
+        ${!noPlugin ? `<p class="muted small">Plugin folder: <code>${esc(st.folder)}</code>${st.demo ? " (demo data)" : ""}</p>` : ""}</div>
+    </div>`;
+  if (scrollY != null) window.scrollTo(0, scrollY);
+  $$("[data-acct]", host).forEach((b) => (b.onclick = () => { NW.acct = b.dataset.acct; store.set("nw", NW); renderers.networth(host); }));
+  $$("[data-range]", host).forEach((b) => (b.onclick = () => { NW.range = b.dataset.range; store.set("nw", NW); renderers.networth(host); }));
+  $$("[data-group]", host).forEach((b) => (b.onclick = () => { NW.group = b.dataset.group; store.set("nw", NW); drawAlloc(); $$("[data-group]", host).forEach((x) => x.classList.toggle("on", x === b)); }));
+  $("#nwRefresh", host).onclick = async () => { await api("/api/account/refresh", { method: "POST" }); renderers.networth(host); };
+  if ($("#nwMore", host)) $("#nwMore", host).onclick = () => { NW.show = 1e9; renderers.networth(host, true); };
+  bindSort(host, NW.sort, () => { store.set("nw", NW); renderers.networth(host, true); });
+  bindRowClicks(host);
+  if ($("#nwSetupSave", host)) $("#nwSetupSave", host).onclick = async () => {
+    await api("/api/settings", { method: "POST", body: { runelite_folder: $("#nwFolder", host).value } });
+    await api("/api/account/refresh", { method: "POST" });
+    renderers.networth(host);
+  };
+  function drawAlloc() {
+    const box = $("#nwAlloc", host);
+    if (NW.group === "container") box.innerHTML = allocRows(v.containers.filter((c) => c.value > 0), "label", v.total, ALLOC_COLORS);
+    else if (NW.group === "item") {
+      const top = holdings.slice(0, 9).map((h) => ({ name: h.name, value: h.value }));
+      const rest = holdings.slice(9).reduce((s, h) => s + h.value, 0);
+      if (rest > 0) top.push({ name: `${holdings.length - 9} other items`, value: rest });
+      box.innerHTML = allocRows(top, "name", v.total, ALLOC_COLORS);
+    } else box.innerHTML = allocRows(v.allocation, "category", v.total, ALLOC_COLORS);
+  }
+  drawAlloc();
+  // Chart: recorded history, and today's holdings at past prices for context.
+  const since = NW.range === "all" ? 0 : Date.now() / 1000 - +NW.range * 86400;
+  const hist = (v.history || []).map((h) => ({ t: h.ts, v: h.total }));
+  if (hist.length) hist.push({ t: Date.now() / 1000, v: v.total });
+  const back = (v.backcast || []).filter((b) => b.ts >= since).map((b) => ({ t: b.ts, v: b.total }));
+  lineChart($("#nwChart", host), [
+    { name: "Net worth", cls: "l1", color: "var(--series-1)", pts: hist },
+    { name: "Today's holdings", cls: "l2", color: "var(--series-2)", pts: back, dash: true },
+  ], { empty: "The chart fills in as the app records your net worth. Import daily history in Settings to see today's holdings at past prices.", aria: "Net worth over time", height: 260, tipFmt: (x) => gp(x) + " gp" });
+  // Slower panels load after the page is up.
+  api("/api/slots").then((d) => {
+    const list = d.accounts.filter((a) => !NW.acct || a.acct === NW.acct);
+    $("#nwSlots", host).innerHTML = list.length ? list.map((a) => {
+      const bySlot = new Map(a.slots.map((s) => [s.slot, s]));
+      const cells = []; for (let i = 0; i < 8; i++) cells.push(slotCard(bySlot.get(i) || { slot: i, state: "EMPTY" }));
+      return `${list.length > 1 ? `<div class="small muted" style="margin:6px 0">${esc(a.name)}</div>` : ""}<div class="slots">${cells.join("")}</div>`;
+    }).join("") : `<div class="empty">No GE offers seen yet.</div>`;
+    $$(".slot[data-id]", host).forEach((el) => (el.onclick = () => openItem(+el.dataset.id)));
+  }).catch(() => {});
+  api(`/api/networth/advice?acct=${encodeURIComponent(NW.acct)}`).then((d) => {
+    const box = $("#nwRecs", host);
+    if (!d.items.length) { box.innerHTML = `<div class="muted small">Nothing to suggest right now. Suggestions appear when an offer is priced away from the market, cash sits idle with free slots, or something you hold is worth more alched, decanted, combined or processed.</div>`; return; }
+    box.innerHTML = REC_GROUPS.map(([g, label]) => {
+      const items = d.items.filter((r) => r.group === g);
+      if (!items.length) return "";
+      return `<div class="rec-group"><div class="rec-h">${esc(label)}</div>${items.map((r) => `<div class="rec" ${r.item ? `data-rid="${r.item}"` : ""}>
+        <div class="rec-top"><b>${esc(r.title)}</b><span class="tag conf-${r.confidence}" title="${esc(CONF[r.confidence][1])}">${CONF[r.confidence][0]}</span></div>
+        <div class="small muted">${esc(r.detail)}</div></div>`).join("")}</div>`;
+    }).join("");
+    $$("[data-rid]", box).forEach((el) => (el.onclick = () => openItem(+el.dataset.rid)));
+  }).catch((e) => { $("#nwRecs", host).innerHTML = `<span class="err small">${esc(e.message)}</span>`; });
+  api(`/api/account/fills?acct=${encodeURIComponent(NW.acct)}&limit=25`).then((d) => {
+    $("#nwFills", host).innerHTML = d.fills.length ? `<div class="mini-list">${d.fills.map((f) => `<div class="r" data-fid="${f.item}"><span class="tag ${f.side === "buy" ? "free" : "pump"}">${f.side}</span><img alt="" src="${esc(iconUrl(f.icon))}" onerror="this.style.visibility='hidden'"><span>${gp(f.qty)} ${esc(f.name || "Item " + f.item)}${f.caught_up ? ` <span class="muted small" title="Seen on login: filled some time before this">caught up</span>` : ""}</span><span class="v">${short(f.gp)} <span class="muted small">${ago(Date.now() / 1000 - f.t)} ago</span></span></div>`).join("")}</div>` : `<div class="muted small">No trades yet. They appear here as your GE offers fill.</div>`;
+    $("#nwLoot", host).innerHTML = d.loot.length ? `<div class="mini-list">${d.loot.map((l) => `<div class="r static"><span><b>${esc(l.source || l.kind)}</b> <span class="muted small">${esc(l.items.slice(0, 3).map((x) => `${gp(x.qty)} ${x.name || "item"}`).join(", "))}${l.items.length > 3 ? "..." : ""}</span></span><span class="v">${short(l.value)} <span class="muted small">${ago(Date.now() / 1000 - l.t)} ago</span></span></div>`).join("")}</div>` : `<div class="muted small">No loot yet. Drops from the Loot Tracker appear here.</div>`;
+    $$("[data-fid]", host).forEach((el) => (el.onclick = () => openItem(+el.dataset.fid)));
+  }).catch(() => {});
+};
+
+function setupCard(st) {
+  return `<div class="card setup" style="margin-bottom:14px"><h3 style="margin-top:0">Connect your account with the RuneLite plugin</h3>
+    <p class="small">The GE Companion plugin listens to RuneLite's own events (your GE offers, bank, inventory, equipment, loot) and writes them to a file on this computer. It never sends input to the game or reads the screen. This app reads that file, so trades and holdings update on their own.</p>
+    <ol class="small">
+      <li>Install Java 11 or newer (Adoptium Temurin is free).</li>
+      <li>In the <code>runelite-plugin</code> folder of this app, double-click <code>run-plugin.bat</code> (or run <code>gradlew run</code>). This opens RuneLite with the plugin loaded.</li>
+      <li>Log in, open your bank once, and open the Grand Exchange once. Everything after that is automatic.</li>
+    </ol>
+    <p class="small muted">Plugin files are read from <code>${esc(st.folder)}</code>${st.exists ? "" : " (not created yet)"}. Change it if you set a different output folder in the plugin's settings.</p>
+    <div class="inline-form"><label class="field wide"><span>Plugin folder</span><input class="input" id="nwFolder" value="${esc(st.folder)}"></label><button class="btn primary" id="nwSetupSave">Save and check</button></div></div>`;
+}
 
 // Money making: recipes and item sets ---------------------------------------------
 const MM = Object.assign({ patient: true, skill: "all", hideRisky: true, q: "", setDir: "all", rates: {}, smithing: "" }, store.get("mm", {}));
@@ -1671,6 +1859,12 @@ renderers.settings = async function (host) {
           <label class="field" title="Daily database copies to keep in data/backups (0 turns it off)"><span>Daily backups kept</span><input class="input" id="stBk" value="${cfg.auto_backup_days}"></label>
           <label class="check"><input type="checkbox" id="stLim" ${cfg.notify_limit_reset ? "checked" : ""}> Alert me when a buy limit resets</label>
         </div>
+        <h3>Account (RuneLite plugin)</h3>
+        <div class="inline-form" style="margin-top:0">
+          <label class="field wide" title="Where the GE Companion RuneLite plugin writes its files. Blank uses the default."><span>Plugin folder</span><input class="input" id="stRl" value="${esc(cfg.runelite_folder || "")}" placeholder="Default: .runelite/ge-companion in your user folder"></label>
+          <label class="field" title="Sell price after tax is what you would get listing everything at the going rate. Mid price is closer to price sites."><span>Value items at</span><select class="input" id="stNwv"><option value="sell" ${cfg.networth_value !== "market" ? "selected" : ""}>Sell price after tax</option><option value="market" ${cfg.networth_value === "market" ? "selected" : ""}>Mid price</option></select></label>
+          <label class="check"><input type="checkbox" id="stNwm" ${cfg.networth_include_manual !== false ? "checked" : ""}> Include Portfolio tab holdings in the all accounts net worth</label>
+        </div>
         <div style="margin-top:12px"><button class="btn primary" id="stSave">Save</button> <span id="stMsg" class="small muted"></span></div>
       </div>
       <div class="card"><h3 style="margin-top:0">Status</h3><div class="kv">
@@ -1692,7 +1886,7 @@ renderers.settings = async function (host) {
   $("#stSave", host).onclick = async () => {
     const v = (id) => $(id, host).value;
     try {
-      const r = await api("/api/settings", { method: "POST", body: { user_agent: v("#stUA"), latest_poll_seconds: v("#stPoll"), stale_minutes: v("#stStale"), alert_cooldown_minutes: v("#stCool"), keep_5m_days: v("#st5"), keep_1h_days: v("#st1"), backfill_hours: v("#stBack"), fill_share: v("#stShare"), trap_gap_minutes: v("#stTrap"), stability_hours: v("#stStab"), auto_backup_days: v("#stBk"), history_import_days: v("#stImp"), notify_limit_reset: $("#stLim", host).checked } });
+      const r = await api("/api/settings", { method: "POST", body: { user_agent: v("#stUA"), latest_poll_seconds: v("#stPoll"), stale_minutes: v("#stStale"), alert_cooldown_minutes: v("#stCool"), keep_5m_days: v("#st5"), keep_1h_days: v("#st1"), backfill_hours: v("#stBack"), fill_share: v("#stShare"), trap_gap_minutes: v("#stTrap"), stability_hours: v("#stStab"), auto_backup_days: v("#stBk"), history_import_days: v("#stImp"), notify_limit_reset: $("#stLim", host).checked, runelite_folder: v("#stRl"), networth_value: v("#stNwv"), networth_include_manual: $("#stNwm", host).checked } });
       $("#stMsg", host).textContent = "Saved. " + (r.note || "");
       loadMarket();
     } catch (e) { $("#stMsg", host).innerHTML = `<span class="err">${esc(e.message)}</span>`; }
@@ -1935,7 +2129,7 @@ async function loadMarket() {
     S.limits = d.limits || {}; S.tax = d.tax; S.fillShare = d.fillShare;
     setLive();
     if (!S.loaded) { S.loaded = true; showTab(S.tab in renderers ? S.tab : "flips"); }
-    else if (["flips", "movers", "alch", "market"].includes(S.tab)) renderTab(S.tab, true);
+    else if (["flips", "movers", "alch", "market", "networth"].includes(S.tab)) renderTab(S.tab, true);
   } catch (e) {
     $("#liveStatus").className = "live bad"; $(".txt", $("#liveStatus")).textContent = "App not running";
   }

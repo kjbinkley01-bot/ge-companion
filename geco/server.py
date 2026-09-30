@@ -8,14 +8,15 @@ import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import analytics, config, features, forecast, forecast_eval, hold, market, recipes
+from . import account, advice, analytics, config, features, forecast, forecast_eval, hold, market, networth, recipes
 from .wiki import ApiError
 
 
 SETTING_KEYS = ("user_agent", "latest_poll_seconds", "stale_minutes", "keep_5m_days", "keep_1h_days",
                 "alert_cooldown_minutes", "fill_share", "trap_gap_minutes", "stability_hours",
                 "history_import_days",
-                "backfill_hours", "notify_limit_reset", "auto_backup_days")
+                "backfill_hours", "notify_limit_reset", "auto_backup_days",
+                "runelite_folder", "networth_value", "networth_include_manual")
 
 
 class App:
@@ -308,6 +309,33 @@ def make_handler(app):
                 })
             if path == "/api/recipes/item":
                 return self._send(200, recipes.recipes_using(E.pricer(), int(q["id"]), D))
+            # Live account (RuneLite plugin) --------------------------------------
+            if path == "/api/account/status":
+                return self._send(200, _account_status(app))
+            if path == "/api/networth":
+                return self._send(200, _networth(app, q.get("acct") or None, q.get("days")))
+            if path == "/api/networth/advice":
+                return self._send(200, analytics.cached(("advice", q.get("acct") or "*", E.params_version), 120,
+                                                        lambda: _advice(app, q.get("acct") or None)))
+            if path == "/api/slots":
+                return self._send(200, _slots(app))
+            if path == "/api/account/fills":
+                acct = q.get("acct") or None
+                rows = account.recent_fills(D, acct, min(500, int(q.get("limit", 100))))
+                names = {a["acct"]: a["name"] for a in account.accounts(D)}
+                for r in rows:
+                    m = E.mapping.get(r["item"], {})
+                    r["name"], r["icon"], r["acctName"] = m.get("name"), m.get("icon"), names.get(r["acct"])
+                loot = D.q("SELECT * FROM loot" + (" WHERE acct=?" if acct else "") + " ORDER BY t DESC LIMIT 50",
+                           (acct,) if acct else ())
+                valuer = networth.Valuer(E, app.cfg.get("networth_value", "sell"))
+                for l in loot:
+                    items = json.loads(l["items"])
+                    l["items"] = [{"id": i, "qty": n, "name": E.mapping.get(i, {}).get("name"),
+                                   "value": valuer.each(i)[0] * n} for i, n in items]
+                    l["value"] = sum(x["value"] for x in l["items"])
+                    l["acctName"] = names.get(l["acct"])
+                return self._send(200, {"fills": rows, "loot": loot})
             if path == "/api/portfolio":
                 return self._send(200, features.portfolio(D, E))
             if path == "/api/limits":
@@ -480,6 +508,17 @@ def make_handler(app):
                 dest = D.backup(os.path.join(config.DATA_DIR, "backups"),
                                 keep=max(1, int(app.cfg.get("auto_backup_days", 7) or 7)))
                 return self._send(200, {"ok": True, "file": os.path.basename(dest)})
+            if path == "/api/flips/ignore":
+                acct, item = b.get("acct"), int(b["item"])
+                if b.get("undo"):
+                    D.run("DELETE FROM flip_ignore WHERE acct=? AND item=?", (acct, item))
+                else:
+                    D.run("INSERT OR IGNORE INTO flip_ignore (acct, item) VALUES (?,?)", (acct, item))
+                account.sync_flips(D, E.tax)
+                return self._send(200, {"ok": True})
+            if path == "/api/account/refresh":
+                n = E.ingest_live(force_worth=True)
+                return self._send(200, {"ok": True, "events": n})
             if path == "/api/settings":
                 changed = {}
                 if "user_agent" in b and str(b["user_agent"]).strip():
@@ -498,6 +537,12 @@ def make_handler(app):
                 if "fill_share" in b and b["fill_share"] not in (None, ""):
                     v = float(b["fill_share"])
                     changed["fill_share"] = max(0.01, min(1.0, v / 100 if v > 1 else v))
+                if "runelite_folder" in b:
+                    changed["runelite_folder"] = str(b["runelite_folder"] or "").strip()[:500]
+                if b.get("networth_value") in ("sell", "market"):
+                    changed["networth_value"] = b["networth_value"]
+                if "networth_include_manual" in b:
+                    changed["networth_include_manual"] = bool(b["networth_include_manual"])
                 if "notify_limit_reset" in b:
                     changed["notify_limit_reset"] = bool(b["notify_limit_reset"])
                 app.cfg.update(changed)
@@ -526,6 +571,65 @@ def make_handler(app):
             return self._send(200, {"ok": True})
 
     return Handler
+
+
+def _account_status(app):
+    E, D = app.engine, app.db
+    folder = E.live_folder()
+    files = []
+    if os.path.isdir(folder):
+        for f in sorted(os.listdir(folder)):
+            if f.startswith("events-") and f.endswith(".jsonl"):
+                p = os.path.join(folder, f)
+                files.append({"name": f, "bytes": os.path.getsize(p), "modified": int(os.path.getmtime(p))})
+    with E.lock:
+        live = dict(E.live)
+    return {"folder": folder, "exists": os.path.isdir(folder), "files": files, "accounts": account.accounts(D),
+            "live": live, "demo": bool(E.demo_feed),
+            "fills": D.one("SELECT COUNT(*) AS n FROM ge_fills")["n"],
+            "autoFlips": D.one("SELECT COUNT(*) AS n FROM flips WHERE source='auto'")["n"],
+            "ignored": D.q("SELECT * FROM flip_ignore")}
+
+
+def _view(app, acct):
+    E, D, cfg = app.engine, app.db, app.cfg
+    return networth.combined_view(D, E, cfg) if not acct else networth.account_view(D, E, acct, cfg)
+
+
+def _networth(app, acct, days):
+    E, D = app.engine, app.db
+    view = _view(app, acct)
+    days = float(days) if days not in (None, "", "all") else None
+    view["changes"] = networth.changes(D, acct, view["total"])
+    view["history"] = networth.history(D, acct, days)
+    view["backcast"] = analytics.cached(("backcast", acct or "*", int(view["total"]) // 1000000, days), 900,
+                                        lambda: networth.backcast(D, E, view, int(min(days or 365, 730))))
+    view["accountList"] = account.accounts(D)
+    view["holdings"] = view["holdings"][:400]
+    return view
+
+
+def _slots(app):
+    E, D = app.engine, app.db
+    with E.lock:
+        by_id = E.by_id
+    out = []
+    for a in account.accounts(D):
+        out.append({"acct": a["acct"], "name": a["name"], "online": a["online"],
+                    "slots": account.slots(D, a["acct"], by_id, E.mapping)})
+    return {"accounts": out}
+
+
+def _advice(app, acct):
+    E, D = app.engine, app.db
+    view = _view(app, acct)
+    by_id = E.by_id
+    accts = [acct] if acct else [a["acct"] for a in account.accounts(D)]
+    slots = {a: account.slots(D, a, by_id, E.mapping) for a in accts}
+    ids = [h["id"] for h in view["holdings"] if h["how"] not in ("cash", "untradeable") and h["share"] >= 0.02][:30]
+    records = networth.item_records(D, E, ids)
+    recs = advice.recommend(view, E, slots, features.buy_limits(D, E.mapping), records.get)
+    return {"items": recs, "total": view["total"]}
 
 
 def _hold_universe(db, tax):

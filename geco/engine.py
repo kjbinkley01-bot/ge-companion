@@ -5,7 +5,7 @@ import os
 import threading
 import time
 
-from . import analytics, features, forecast, forecast_eval, hold, market, recipes
+from . import account, analytics, features, forecast, forecast_eval, hold, market, networth, recipes
 from .config import DATA_DIR
 
 log = logging.getLogger("geco")
@@ -36,6 +36,12 @@ class Engine:
         self.forecast_params = forecast.load_params(DATA_DIR)
         self.params_version = 0
         self.hold_model = hold.load(DATA_DIR)
+        account.init(db)
+        networth.init(db)
+        self.demo_feed = None
+        self._demo_seeded = False
+        self.live = {"events": 0, "last": None, "lastIngest": None, "folder": None}
+        self._worth_at = 0
 
     # Status helpers -------------------------------------------------------------
     def _err(self, where, e):
@@ -355,8 +361,47 @@ class Engine:
             self.refresh_latest()
         except Exception as e:
             self._err("latest", e)
+        if getattr(self.client, "is_demo", False):
+            try:
+                from .demo_feed import DemoFeed
+                self.demo_feed = DemoFeed(os.path.join(DATA_DIR, "demo-runelite"), self.mapping, self.latest)
+            except Exception as e:
+                self._err("demo RuneLite feed", e)
+        self.ingest_live()
         threading.Thread(target=self._loop, daemon=True, name="poller").start()
         threading.Thread(target=self.backfill, daemon=True, name="backfill").start()
+
+    def live_folder(self):
+        if self.demo_feed:
+            return self.demo_feed.folder
+        return self.cfg.get("runelite_folder") or account.default_folder()
+
+    def ingest_live(self, force_worth=False):
+        """Read new RuneLite plugin events, rebuild automatic flips, record net worth."""
+        try:
+            if self.demo_feed:
+                self.demo_feed.tick(self.latest)
+            folder = self.live_folder()
+            n = account.ingest(self.db, folder)
+            now = time.time()
+            with self.lock:
+                self.live["folder"] = folder
+                self.live["lastIngest"] = int(now)
+                if n:
+                    self.live["events"] += n
+                    self.live["last"] = int(now)
+            if n:
+                account.sync_flips(self.db, self.tax)
+            if self.demo_feed and not self._demo_seeded and self.rows:
+                self._demo_seeded = networth.seed_demo(self.db, self, self.cfg) > 0
+            # Net worth: after changes (at most every 5 minutes) and every 15 minutes for price moves.
+            if self.rows and ((n and now - self._worth_at > 300) or now - self._worth_at > 900 or force_worth):
+                self._worth_at = now
+                networth.record(self.db, self, self.cfg)
+            return n
+        except Exception as e:
+            self._err("RuneLite plugin data", e)
+            return 0
 
     def stop(self):
         self._stop.set()
@@ -369,7 +414,11 @@ class Engine:
         last_prune = 0
         last_mapping = time.time()
         last_jobs = time.time() - 3600 + 600  # first run 10 minutes in, after the backfill
+        last_live = 0
         while not self._stop.wait(2):
+            if time.time() - last_live >= 5:
+                last_live = time.time()
+                self.ingest_live()
             now = time.time()
             try:
                 if now >= next_latest:

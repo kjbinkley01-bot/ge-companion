@@ -30,6 +30,7 @@ import net.runelite.api.gameval.VarbitID;
 import net.runelite.client.RuneLite;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
+import net.runelite.client.game.ItemManager;
 import net.runelite.client.game.ItemStack;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
@@ -97,6 +98,9 @@ public class GeCompanionPlugin extends Plugin
 
 	@Inject
 	private ScheduledExecutorService executor;
+
+	@Inject
+	private ItemManager itemManager;
 
 	private EventWriter writer;
 	private final ChangeFilter filter = new ChangeFilter();
@@ -230,7 +234,7 @@ public class GeCompanionPlugin extends Plugin
 			return;
 		}
 		ItemContainer c = event.getItemContainer();
-		int[] flat = flatten(c == null ? new Item[0] : c.getItems());
+		int[] flat = flatten(c == null ? new Item[0] : c.getItems(), itemManager::canonicalize);
 		if (account != null && !filter.changed(account + "c:" + kind, flat))
 		{
 			return;
@@ -284,8 +288,11 @@ public class GeCompanionPlugin extends Plugin
 		emit(e);
 	}
 
-	/** [id, qty, id, qty, ...] with empty slots removed and stacks of the same item merged. */
-	static int[] flatten(Item[] items)
+	/**
+	 * [id, qty, id, qty, ...] with empty slots and placeholders removed, noted items turned
+	 * into their normal item id (so they can be priced), and stacks of one item merged.
+	 */
+	static int[] flatten(Item[] items, java.util.function.IntUnaryOperator canonical)
 	{
 		Map<Integer, Long> merged = new java.util.LinkedHashMap<>();
 		for (Item it : items)
@@ -294,7 +301,7 @@ public class GeCompanionPlugin extends Plugin
 			{
 				continue;
 			}
-			merged.merge(it.getId(), (long) it.getQuantity(), Long::sum);
+			merged.merge(canonical.applyAsInt(it.getId()), (long) it.getQuantity(), Long::sum);
 		}
 		int[] out = new int[merged.size() * 2];
 		int i = 0;
@@ -332,7 +339,7 @@ public class GeCompanionPlugin extends Plugin
 		List<int[]> items = new ArrayList<>();
 		for (ItemStack s : event.getItems())
 		{
-			items.add(new int[]{s.getId(), s.getQuantity()});
+			items.add(new int[]{itemManager.canonicalize(s.getId()), s.getQuantity()});
 		}
 		e.put("items", items);
 		emit(e);

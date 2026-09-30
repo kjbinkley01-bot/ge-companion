@@ -30,6 +30,10 @@ DEFAULTS = {
     # Days of daily market history to import from the Wiki's bulk /24h endpoint (one request
     # per day of history, once). Feeds the forecast and its backtest. 0 turns it off.
     "history_import_days": 730,
+    # RuneLite plugin folder (blank: ~/.runelite/ge-companion) and net worth valuation.
+    "runelite_folder": "",
+    "networth_value": "sell",
+    "networth_include_manual": True,
     # Daily copy of the database in data/backups, keeping this many (0 turns it off).
     "auto_backup_days": 7,
     # GE convenience fee (tax). Current rules: 2%, rounded down, 5m cap per item,

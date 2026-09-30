@@ -4,8 +4,10 @@ Personal Old School RuneScape Grand Exchange and account tool that runs locally 
 A free alternative to GE Tracker premium, built only on public, read-only data.
 
 ## Hard rules
-* Never interact with the game client: no input automation, screen reading, memory reading or
-  macros. Jagex rules ban this. Data comes only from public web APIs.
+* Never automate the game: no input automation, screen reading, memory reading or macros.
+  Jagex rules ban this. Market data comes only from public web APIs. Account data comes only
+  from the listen-only RuneLite plugin (`runelite-plugin/`), which reads RuneLite's plugin API
+  events and writes local files; it must never send input, click, or change game state.
 * Keep the backend on the Python standard library (no pip installs). The owner starts it by
   double-clicking `start.bat`.
 * Every request to the Wiki must send the configured User-Agent. Never loop `/latest?id=` over
@@ -42,6 +44,21 @@ A free alternative to GE Tracker premium, built only on public, read-only data.
   horizon (7/30/90 days), walk-forward tested; a horizon's signal is only used if it beat
   "no change" on held out months, otherwise the outlook centers on no change with odds and
   ranges from real moves. Ships `geco/hold_model.json` (two years, Sep 2026: no signal passed).
+* `runelite-plugin/`: RuneLite plugin (Java 11, Gradle, `run-plugin.bat` or `gradlew run`
+  sideloads it). Writes JSON lines to `~/.runelite/ge-companion/events-YYYY-MM.jsonl`:
+  `{v, t (ms), type, acct (rsprofile key), name, ...}` with types login, logout, offer (slot,
+  state, item, price, total, done, spent: cumulative), container (bank, inventory, equipment,
+  looting_bag, seed_vault, rune_pouch, death_storage, ge_collect_0..7; items as [[id, qty]],
+  noted ids canonicalized), loot, xp. JUnit tests: `gradle test` in that folder.
+* `geco/account.py`: ingests plugin files incrementally (byte offsets, whole lines only), keeps
+  latest GE offers, reconstructs fills from cumulative offer changes, FIFO matches them into
+  automatic flip log rows (`flips.source='auto'`, rebuilt each time; `flip_ignore` opts out).
+* `geco/networth.py`: account valuation (sell price after tax or mid), GE escrow (reserved
+  coins, listed items, collection boxes), cost basis from open lots, portfolio categories,
+  history in `account_worth` (5 minute buckets, per account and `*` combined), backcast of
+  today's holdings at past prices.
+* `geco/advice.py`: recommendations from what an account holds, each with a confidence label.
+* `geco/demo_feed.py`: writes plugin format events in demo mode (`data/demo-runelite`).
 * `geco/server.py`: JSON API plus static files, bound to 127.0.0.1.
 * `web/`: vanilla JS dashboard (`app.js`), no build step. Charts are hand-rolled SVG
   (`priceChart`, `lineChart`, `barChart`, `heatmap`), colors are CSS tokens in `style.css`.
@@ -69,5 +86,9 @@ tracking, slot planner, market indices, portfolio and net worth, money making by
 arbitrage, backtester, seasonality heatmap, correlations, composite and watchlist alerts, desktop
 notifications, KC gains, drop log with dry streaks, flip analytics, backups and export,
 and a Forecast tab (expected profit with likely range over 7/30/90 days).
+v3: RuneLite plugin for live account data, Net worth tab (portfolio style valuation, history,
+allocation, live GE slots, recommendations), automatic flip log from real trades.
+Open questions to verify in game: whether a sell offer's `spent` is before or after tax
+(`account.sell_split` handles both), and how promptly collection box containers update.
 Hiscores response format verified against the live endpoint (Sep 2026).
 Next: guide price tracking, clue reward values, custom index categories.

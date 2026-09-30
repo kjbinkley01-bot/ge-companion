@@ -70,6 +70,8 @@ def limit_resets(db, since, until):
 def flip_rows(db, engine):
     rows = db.q("SELECT * FROM flips ORDER BY COALESCE(sell_ts, buy_ts) DESC, fid DESC")
     tax = engine.tax
+    names = {a["acct"]: a["name"] for a in db.q("SELECT acct, name FROM accounts")} if db.one(
+        "SELECT name FROM sqlite_master WHERE name='accounts'") else {}
     out = []
     for f in rows:
         m = engine.mapping.get(f["item_id"], {})
@@ -78,6 +80,8 @@ def flip_rows(db, engine):
         r = dict(f)
         r["name"] = m.get("name", f"Item {f['item_id']}")
         r["icon"] = m.get("icon")
+        r["auto"] = f.get("source") == "auto"
+        r["acctName"] = names.get(f.get("acct"))
         r["cost"] = qty * buy
         if f["sell_price"] is not None:
             t = tax(f["sell_price"], f["item_id"])
@@ -225,7 +229,8 @@ def portfolio(db, engine, history_days=90):
         tot_chg += chg or 0
     flips = []
     flip_val = flip_cost = 0
-    for f in db.q("SELECT * FROM flips WHERE sell_price IS NULL"):
+    # Automatic flips are real trades whose items the plugin already counts in the Net worth tab.
+    for f in db.q("SELECT * FROM flips WHERE sell_price IS NULL AND COALESCE(source, '') != 'auto'"):
         val, _ = _sell_value(engine, f["item_id"], f["qty"])
         m = engine.mapping.get(f["item_id"], {})
         cost = f["qty"] * f["buy_price"]

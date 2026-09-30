@@ -66,6 +66,8 @@ MIGRATIONS = [
     ("flips", "ref_low", "INTEGER"),
     ("flips", "ref_high", "INTEGER"),
     ("alerts", "extra", "TEXT"),
+    ("flips", "source", "TEXT"),   # 'auto' rows are rebuilt from real GE trades (RuneLite plugin)
+    ("flips", "acct", "TEXT"),
 ]
 
 

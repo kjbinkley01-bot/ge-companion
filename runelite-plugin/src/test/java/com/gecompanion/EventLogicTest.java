@@ -24,8 +24,11 @@ public class EventLogicTest
 	@Test
 	public void flattenMergesStacksAndDropsEmptySlots()
 	{
-		Item[] items = {new Item(995, 1000), new Item(-1, 0), new Item(561, 5), new Item(995, 500), null};
-		assertArrayEquals(new int[]{995, 1500, 561, 5}, GeCompanionPlugin.flatten(items));
+		Item[] items = {new Item(995, 1000), new Item(-1, 0), new Item(561, 5), new Item(995, 500), null,
+			new Item(4152, 2), new Item(4151, 1)};
+		// Pretend 4152 is the noted form of 4151 (Abyssal whip).
+		int[] flat = GeCompanionPlugin.flatten(items, id -> id == 4152 ? 4151 : id);
+		assertArrayEquals(new int[]{995, 1500, 561, 5, 4151, 3}, flat);
 	}
 
 	@Test
