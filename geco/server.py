@@ -1,4 +1,6 @@
 """Local HTTP server: JSON API plus the dashboard files. Binds to 127.0.0.1 only."""
+import base64
+import hmac
 import json
 import math
 import mimetypes
@@ -8,7 +10,7 @@ import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import account, advice, analytics, events, indicators, news, risk, config, features, forecast, forecast_eval, hold, market, networth, recipes
+from . import account, advice, analytics, brief, coach, edge, events, extras, fills, guard, push, targets, wealth, indicators, news, risk, config, features, forecast, forecast_eval, hold, market, networth, recipes
 from .wiki import ApiError
 
 
@@ -16,7 +18,9 @@ SETTING_KEYS = ("user_agent", "latest_poll_seconds", "stale_minutes", "keep_5m_d
                 "alert_cooldown_minutes", "fill_share", "trap_gap_minutes", "stability_hours",
                 "history_import_days",
                 "backfill_hours", "notify_limit_reset", "auto_backup_days",
-                "runelite_folder", "networth_value", "networth_include_manual")
+                "runelite_folder", "networth_value", "networth_include_manual", "fill_share_measured",
+                "push_discord_webhook", "push_ntfy_topic", "push_ntfy_server", "push_events", "statement_time",
+                "lan_enabled")
 
 
 class App:
@@ -28,7 +32,7 @@ def make_handler(app):
     E, D = app.engine, app.db
 
     class Handler(BaseHTTPRequestHandler):
-        server_version = "GECompanion/1.0"
+        server_version = "Bankstanding/1.0"
 
         def log_message(self, fmt, *args):
             pass
@@ -76,7 +80,44 @@ def make_handler(app):
             with open(full, "rb") as f:
                 self._send(200, f.read(), ctype)
 
+        def _allowed(self):
+            """Only this computer, or your phone on home Wi-Fi with the password (LAN mode).
+
+            Also blocks other websites from driving the app through your browser: the Host
+            header must be this app's (stops DNS rebinding) and changes must come from this
+            app's own pages (Origin check).
+            """
+            ip = self.client_address[0]
+            local = ip in ("127.0.0.1", "::1") or ip.startswith("::ffff:127.")
+            if not local:
+                pw = app.cfg.get("lan_password") or ""
+                ok = False
+                if app.cfg.get("lan_enabled") and len(pw) >= 8:
+                    auth = self.headers.get("Authorization") or ""
+                    if auth.startswith("Basic "):
+                        try:
+                            given = base64.b64decode(auth[6:]).decode("utf-8").split(":", 1)[-1]
+                            ok = hmac.compare_digest(given.encode(), pw.encode())
+                        except (ValueError, UnicodeDecodeError):
+                            ok = False
+                if not ok:
+                    self._send(401, {"error": "password needed"}, extra={"WWW-Authenticate": 'Basic realm="Bankstanding"'})
+                    return False
+            else:
+                host = (self.headers.get("Host") or "").rsplit(":", 1)[0].strip("[]")
+                if host not in ("127.0.0.1", "localhost", "::1", ""):
+                    self._send(403, {"error": "unexpected host"})
+                    return False
+            if self.command != "GET":
+                origin = self.headers.get("Origin") or self.headers.get("Referer")
+                if origin and urllib.parse.urlparse(origin).netloc != self.headers.get("Host"):
+                    self._send(403, {"error": "cross site request refused"})
+                    return False
+            return True
+
         def _guard(self, fn):
+            if not self._allowed():
+                return
             try:
                 fn()
             except ApiError as e:
@@ -194,7 +235,11 @@ def make_handler(app):
             if path == "/api/boss":
                 return self._send(200, features.boss_view(D, E, q["player"], q.get("mode", "normal")))
             if path == "/api/settings":
-                return self._send(200, {k: app.cfg.get(k) for k in SETTING_KEYS + ("tax_rate", "tax_cap")})
+                out = {k: app.cfg.get(k) for k in SETTING_KEYS + ("tax_rate", "tax_cap")}
+                out["lanPasswordSet"] = len(app.cfg.get("lan_password") or "") >= 8
+                out["lanAddresses"] = lan_addresses()
+                out["pushEvents"] = push.EVENTS
+                return self._send(200, out)
             # Analytics -----------------------------------------------------------
             if path == "/api/seasonality":
                 iid, days = int(q["id"]), max(3, min(365, int(q.get("days", 30))))
@@ -347,6 +392,53 @@ def make_handler(app):
             if path == "/api/indicators/report":
                 return self._send(200, _background(("indicators", E.params_version), 12 * 3600,
                                                    lambda: indicators.report(D, E.tax, E)))
+            if path == "/api/wealth":
+                return self._send(200, {"goals": wealth.goals(D, E, app.cfg),
+                                        "sources": wealth.sources(D, E, app.cfg, int(q.get("days", 30)))})
+            if path == "/api/edge":
+                return self._send(200, edge.report(D, E, features.flip_rows(D, E), int(q.get("days", 90))))
+            if path == "/api/paper":
+                return self._send(200, {"rules": [edge.paper_results(D, E, r["pid"])
+                                                  for r in D.q("SELECT pid FROM paper_rules ORDER BY pid DESC")],
+                                        "tags": edge.TAGS})
+            if path == "/api/targets":
+                return self._send(200, {"targets": targets.view(D, E)})
+            if path == "/api/guard":
+                ids = [int(x) for x in q["ids"].split(",") if x] if q.get("ids") else \
+                    [h["id"] for h in networth.combined_view(D, E, app.cfg)["holdings"]] + [r["id"] for r in D.q("SELECT id FROM watchlist")]
+                res = guard.scan(D, E, ids[:300])
+                return self._send(200, {"items": [dict(v, id=k, name=(E.mapping.get(k) or {}).get("name")) for k, v in
+                                                  sorted(res.items(), key=lambda kv: -kv[1]["score"])]})
+            if path == "/api/guide":
+                return self._send(200, extras.guide(D, app.client, int(q["id"])))
+            if path == "/api/clues":
+                return self._send(200, {"tiers": extras.clues(D, E, networth.Valuer(E, app.cfg.get("networth_value", "sell")))})
+            if path == "/api/categories/custom":
+                cats = extras.custom_categories(D)
+                for c in cats:
+                    c["names"] = [(E.mapping.get(i) or {}).get("name") for i in c["items"]]
+                return self._send(200, {"categories": cats})
+            if path == "/api/plugin/summary":
+                return self._send(200, _plugin_summary(app, int(q["item"]) if q.get("item") else None))
+            if path == "/api/statement":
+                last = brief.last_seen(D)
+                since = int(q["since"]) if q.get("since") else (last or int(time.time() - 86400))
+                since = max(since, int(time.time() - 14 * 86400))
+                st = brief.statement(D, E, app.cfg, since=since)
+                st["lastSeen"] = last
+                return self._send(200, st)
+            if path == "/api/coach":
+                return self._send(200, {"items": coach.check(D, E, app.cfg)})
+            if path == "/api/fillrates":
+                r = fills.rates(D)
+                recent = sorted(fills.measure(D), key=lambda x: -x["closed"])[:40]
+                for x in recent:
+                    x["name"] = (E.mapping.get(x["item"]) or {}).get("name")
+                items = [dict(v, id=k, name=(E.mapping.get(k) or {}).get("name")) for k, v in (r.get("items") or {}).items()]
+                return self._send(200, {"overall": r.get("overall"), "n": r.get("n"), "sides": r.get("sides"),
+                                        "items": sorted(items, key=lambda x: -x["n"]), "recent": recent,
+                                        "setting": app.cfg.get("fill_share", 0.2),
+                                        "useMeasured": app.cfg.get("fill_share_measured", True)})
             if path == "/api/heatmap":
                 rows, _ = self._market_rows()
                 liquid = [r for r in rows if r.get("vol24") and r.get("high") and r.get("chg24h") is not None]
@@ -556,6 +648,59 @@ def make_handler(app):
                 dest = D.backup(os.path.join(config.DATA_DIR, "backups"),
                                 keep=max(1, int(app.cfg.get("auto_backup_days", 7) or 7)))
                 return self._send(200, {"ok": True, "file": os.path.basename(dest)})
+            if path == "/api/wealth/goals":
+                target = int(float(b["target"])) if b.get("target") not in (None, "") else None
+                item = int(b["item_id"]) if b.get("item_id") else None
+                if not target and not item:
+                    raise ValueError("set a target amount or pick an item")
+                name = (b.get("name") or "").strip()[:60] or ((E.mapping.get(item) or {}).get("name") if item else "Goal")
+                deadline = int(b["deadline"]) if b.get("deadline") else None
+                gid = D.run("INSERT INTO wealth_goals (name, target, item_id, qty, deadline, created) VALUES (?,?,?,?,?,?)",
+                            (name, target, item, int(b.get("qty") or 1), deadline, now))
+                return self._send(200, {"gid": gid})
+            if path == "/api/flips/tag":
+                row = D.one("SELECT * FROM flips WHERE fid=?", (int(b["fid"]),))
+                if not row:
+                    raise ValueError("unknown trade")
+                edge.set_tag(D, row, b.get("tag"))
+                return self._send(200, {"ok": True})
+            if path == "/api/paper":
+                params = b.get("params") or {}
+                if params.get("strategy") not in analytics.STRATEGIES:
+                    raise ValueError("pick a rule")
+                pid = D.run("INSERT INTO paper_rules (name, params, created) VALUES (?,?,?)",
+                            ((b.get("name") or analytics.STRATEGIES[params["strategy"]])[:80], json.dumps(params), now))
+                return self._send(200, {"pid": pid})
+            if path == "/api/targets":
+                iid, side = int(b["item_id"]), b.get("side", "sell")
+                if side not in ("sell", "buy"):
+                    raise ValueError("side must be buy or sell")
+                if b.get("steps"):
+                    base = float(b.get("base") or (E.by_id.get(iid) or {}).get("high" if side == "sell" else "low") or 0)
+                    plan = targets.ladder(int(b["qty"]), base, [float(x) / 100 for x in b["steps"]], side)
+                    if not plan:
+                        raise ValueError("enter a quantity and steps")
+                    label = "ladder " + ",".join(str(x) for x in b["steps"])
+                    for q_, p_ in plan:
+                        D.run("INSERT INTO targets (item_id, side, price, qty, note, created, ladder) VALUES (?,?,?,?,?,?,?)",
+                              (iid, side, p_, q_, b.get("note"), now, label))
+                    return self._send(200, {"added": len(plan)})
+                D.run("INSERT INTO targets (item_id, side, price, qty, note, created) VALUES (?,?,?,?,?,?)",
+                      (iid, side, int(float(b["price"])), int(b["qty"]) if b.get("qty") else None, b.get("note"), now))
+                return self._send(200, {"added": 1})
+            if path == "/api/categories/custom":
+                cid = extras.add_category(D, b.get("name"), b.get("items") or [])
+                analytics.clear_cache()
+                return self._send(200, {"cid": cid})
+            if path == "/api/statement/seen":
+                brief.seen(D)
+                return self._send(200, {"ok": True})
+            if path == "/api/push/test":
+                res = push.send(app.cfg, "Bankstanding test", "Notifications are working. Standing at the bank, professionally.",
+                                force=True, wait=True)
+                if not res:
+                    return self._send(400, {"error": "Add a Discord webhook or an ntfy topic first."})
+                return self._send(200, {"results": [{"service": a, "ok": b, "detail": c} for a, b, c in res]})
             if path == "/api/flips/ignore":
                 acct, item = b.get("acct"), int(b["item"])
                 if b.get("undo"):
@@ -589,6 +734,27 @@ def make_handler(app):
                     changed["runelite_folder"] = str(b["runelite_folder"] or "").strip()[:500]
                 if b.get("networth_value") in ("sell", "market"):
                     changed["networth_value"] = b["networth_value"]
+                for k in ("push_discord_webhook", "push_ntfy_topic", "push_ntfy_server"):
+                    if k in b:
+                        v = str(b[k] or "").strip()[:400]
+                        if k == "push_discord_webhook" and v and not v.startswith("https://discord.com/api/webhooks/") \
+                                and not v.startswith("https://discordapp.com/api/webhooks/"):
+                            raise ValueError("that does not look like a Discord webhook address")
+                        changed[k] = v
+                if isinstance(b.get("push_events"), dict):
+                    changed["push_events"] = {k: bool(b["push_events"].get(k)) for k in push.EVENTS}
+                if b.get("statement_time"):
+                    hh, mm = str(b["statement_time"]).split(":")
+                    changed["statement_time"] = f"{max(0, min(23, int(hh))):02d}:{max(0, min(59, int(mm))):02d}"
+                if "lan_enabled" in b:
+                    pw = str(b.get("lan_password") or app.cfg.get("lan_password") or "")
+                    if b["lan_enabled"] and len(pw) < 8:
+                        raise ValueError("choose a password of at least 8 characters for phone access")
+                    changed["lan_enabled"] = bool(b["lan_enabled"])
+                    if b.get("lan_password"):
+                        changed["lan_password"] = pw
+                if "fill_share_measured" in b:
+                    changed["fill_share_measured"] = bool(b["fill_share_measured"])
                 if "networth_include_manual" in b:
                     changed["networth_include_manual"] = bool(b["networth_include_manual"])
                 if "notify_limit_reset" in b:
@@ -611,7 +777,10 @@ def make_handler(app):
                       "/api/flips": ("flips", "fid", "fid"), "/api/goals": ("goals", "gid", "gid"),
                       "/api/holdings": ("holdings", "hid", "hid"), "/api/drops": ("drops", "did", "did"),
                       "/api/chase": ("chase", "cid", "cid"),
-                      "/api/recipes/custom": ("recipes_custom", "rid", "rid")}
+                      "/api/recipes/custom": ("recipes_custom", "rid", "rid"),
+                      "/api/wealth/goals": ("wealth_goals", "gid", "gid"), "/api/paper": ("paper_rules", "pid", "pid"),
+                      "/api/targets": ("targets", "tid", "tid"),
+                      "/api/categories/custom": ("custom_categories", "cid", "cid")}
             if path not in tables:
                 return self._send(404, {"error": "unknown endpoint"})
             table, col, arg = tables[path]
@@ -691,6 +860,46 @@ def _terminal(app, iid):
     }
 
 
+def lan_addresses():
+    """This computer's addresses on the home network (for opening the app on a phone)."""
+    import socket
+    ips = set()
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sk:
+            sk.connect(("10.255.255.255", 1))  # no packet is sent; picks the LAN interface
+            ips.add(sk.getsockname()[0])
+    except OSError:
+        pass
+    try:
+        ips.update(a for a in socket.gethostbyname_ex(socket.gethostname())[2] if not a.startswith("127."))
+    except OSError:
+        pass
+    return sorted(ips)
+
+
+def _plugin_summary(app, item=None):
+    """Small summary for the RuneLite panel: net worth, offers needing attention, one item's prices."""
+    E, D = app.engine, app.db
+    view = networth.combined_view(D, E, app.cfg)
+    ch = networth.changes(D, None, view["total"])
+    out = {"total": view["total"], "d1": (ch.get("d1") or {}).get("gp"), "cash": view["cash"],
+           "coach": [{"title": c["title"], "suggest": c.get("suggest")} for c in coach.check(D, E, app.cfg)][:5]}
+    if item:
+        r = E.by_id.get(item) or {}
+        m = E.mapping.get(item) or {}
+        pos = next((h for h in view["holdings"] if h["id"] == item), None)
+        lim = features.buy_limits(D, E.mapping).get(item)
+        out["item"] = {"id": item, "name": m.get("name"), "high": r.get("high"), "low": r.get("low"),
+                       "profit": r.get("profit"), "roi": r.get("roi"), "limit": m.get("limit"),
+                       "limitLeft": lim["left"] if lim else m.get("limit"),
+                       "suggestBuy": r["low"] + 1 if r.get("low") else None,
+                       "suggestSell": r["high"] - 1 if r.get("high") else None,
+                       "fillHrs": r.get("fillHrs"), "stability": r.get("stability"),
+                       "held": pos["qty"] if pos else 0, "costEach": pos.get("costEach") if pos else None,
+                       "chg24h": r.get("chg24h")}
+    return out
+
+
 def _account_status(app):
     E, D = app.engine, app.db
     folder = E.live_folder()
@@ -760,6 +969,7 @@ def _hold_universe(db, tax):
 
 
 def serve(app, port):
-    httpd = ThreadingHTTPServer(("127.0.0.1", port), make_handler(app))
+    lan = app.cfg.get("lan_enabled") and len(app.cfg.get("lan_password") or "") >= 8
+    httpd = ThreadingHTTPServer(("0.0.0.0" if lan else "127.0.0.1", port), make_handler(app))
     httpd.daemon_threads = True
     return httpd

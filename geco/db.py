@@ -68,6 +68,7 @@ MIGRATIONS = [
     ("alerts", "extra", "TEXT"),
     ("flips", "source", "TEXT"),   # 'auto' rows are rebuilt from real GE trades (RuneLite plugin)
     ("flips", "acct", "TEXT"),
+    ("flips", "tag", "TEXT"),      # strategy tag (manual rows directly, auto rows via trade_tags)
 ]
 
 

@@ -189,6 +189,14 @@ def indices(db, mapping, rows_by_id, days=7, now=None):
     end = int(now // b * b)
     grid = list(range(start, end + 1, b))
     cats = index_universe(mapping, rows_by_id)
+    labels = dict(categories.LABELS)
+    try:
+        from . import extras
+        for c in extras.custom_categories(db):
+            cats[f"custom{c['cid']}"] = c["items"]
+            labels[f"custom{c['cid']}"] = c["name"]
+    except Exception:  # the table may not exist in an old test database
+        pass
     ids = set()
     for v in cats.values():
         ids.update(v)
@@ -198,7 +206,7 @@ def indices(db, mapping, rows_by_id, days=7, now=None):
     if first is not None and first > start:
         grid = [t for t in grid if t >= first]
     out = []
-    for key in ["market"] + [k for k, _ in categories.CATEGORIES] + ["bigticket"]:
+    for key in ["market"] + [k for k, _ in categories.CATEGORIES] + ["bigticket"] + [k for k in cats if k.startswith("custom")]:
         members = cats.get(key) or []
         series, mem = compute_index({i: data[i] for i in members if i in data}, grid)
         if not series:
@@ -212,7 +220,7 @@ def indices(db, mapping, rows_by_id, days=7, now=None):
             mm = mapping.get(m["id"], {})
             top.append({"id": m["id"], "name": mm.get("name"), "icon": mm.get("icon"),
                         "weight": m["weight"], "change": m["change"]})
-        out.append({"key": key, "label": categories.LABELS.get(key, key), "items": len(mem),
+        out.append({"key": key, "label": labels.get(key, key), "items": len(mem), "custom": key.startswith("custom"),
                     "series": series, "change": chg, "chg24": chg24, "top": top})
     return {"days": days, "bucket": b, "categories": out}
 

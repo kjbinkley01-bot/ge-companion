@@ -22,6 +22,8 @@ DEFAULTS = {
     # Share of an item's instant-sell / instant-buy volume you can expect to win as a
     # flipper. Other flippers compete for the same trades, so 100% is never realistic.
     "fill_share": 0.2,
+    # Use your own measured fill share (from GE offers the plugin saw) where there is enough data.
+    "fill_share_measured": True,
     # A margin whose two prices traded this far apart in time is flagged as a possible trap.
     "trap_gap_minutes": 15,
     # How many hours of 5 minute history the margin stability score looks at.
@@ -36,6 +38,15 @@ DEFAULTS = {
     "networth_include_manual": True,
     # Game updates, blogs and polls from the OSRS Wiki and Jagex's news feed.
     "news_enabled": True,
+    # Phone notifications (optional): a Discord webhook and/or an ntfy topic, and which events.
+    "push_discord_webhook": "",
+    "push_ntfy_topic": "",
+    "push_ntfy_server": "https://ntfy.sh",
+    "push_events": {"fills": True, "alerts": True, "coach": True, "limits": False, "statement": True},
+    "statement_time": "08:00",
+    # View the dashboard from your phone on home Wi-Fi (needs a password; restart to apply).
+    "lan_enabled": False,
+    "lan_password": "",
     # Daily copy of the database in data/backups, keeping this many (0 turns it off).
     "auto_backup_days": 7,
     # GE convenience fee (tax). Current rules: 2%, rounded down, 5m cap per item,
@@ -69,9 +80,9 @@ def load():
         except (OSError, ValueError):
             pass
     # v3: the holding outlook needs two years of daily history; lift the old 365 default.
+    if cfg.get("user_agent") == "GE Companion - personal local price dashboard":
+        cfg["user_agent"] = DEFAULTS["user_agent"]  # the app was renamed to Bankstanding
     if cfg.get("config_version", 1) < 3:
-        if cfg.get("user_agent") == "GE Companion - personal local price dashboard":
-            cfg["user_agent"] = DEFAULTS["user_agent"]  # the app was renamed
         if cfg.get("history_import_days") == 365:
             cfg["history_import_days"] = 730
         cfg["config_version"] = 3

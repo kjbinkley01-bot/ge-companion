@@ -30,22 +30,36 @@ def limit_windows(buys):
 
 
 def buy_limits(db, mapping, now=None):
-    """Active limit windows per item from the flip log: used, left and reset time."""
+    """Active limit windows per item: used, left and reset time.
+
+    GE limits are per account. Trades the RuneLite plugin recorded carry their account;
+    trades logged by hand count for your main account (the one seen most recently). Each
+    item shows the main account's window, with every account's in `byAcct`.
+    """
     now = now or time.time()
-    rows = db.q("SELECT item_id, qty, buy_ts FROM flips WHERE buy_ts >= ? ORDER BY item_id, buy_ts",
+    rows = db.q("SELECT item_id, qty, buy_ts, acct FROM flips WHERE buy_ts >= ? ORDER BY item_id, buy_ts",
                 (int(now - 24 * 3600),))
+    have_accts = db.one("SELECT name FROM sqlite_master WHERE name='accounts'")
+    accts = db.q("SELECT acct, name FROM accounts ORDER BY last_seen DESC") if have_accts else []
+    main = accts[0]["acct"] if accts else None
+    names = {a["acct"]: a["name"] for a in accts}
     per = {}
     for r in rows:
-        per.setdefault(r["item_id"], []).append((r["buy_ts"], r["qty"]))
-    out = {}
-    for iid, buys in per.items():
+        per.setdefault((r["item_id"], r.get("acct") or main), []).append((r["buy_ts"], r["qty"]))
+    by_item = {}
+    for (iid, acct), buys in per.items():
         start, used = limit_windows(buys)[-1]
         reset = start + LIMIT_WINDOW
         if reset <= now:
             continue
         limit = mapping.get(iid, {}).get("limit")
-        out[iid] = {"used": used, "start": start, "resetAt": reset, "limit": limit,
-                    "left": max(0, limit - used) if limit else None}
+        by_item.setdefault(iid, []).append({"acct": acct, "name": names.get(acct), "used": used, "start": start,
+                                            "resetAt": reset, "limit": limit,
+                                            "left": max(0, limit - used) if limit else None})
+    out = {}
+    for iid, lst in by_item.items():
+        pick = next((x for x in lst if x["acct"] == main), None) or max(lst, key=lambda x: x["used"])
+        out[iid] = dict(pick, byAcct=lst)
     return out
 
 

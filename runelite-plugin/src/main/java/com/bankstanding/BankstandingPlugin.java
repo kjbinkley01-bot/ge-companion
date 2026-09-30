@@ -1,13 +1,18 @@
 package com.bankstanding;
 
 import com.google.gson.Gson;
+import com.google.gson.JsonObject;
 import com.google.inject.Provides;
 import java.io.File;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
+import javax.swing.SwingUtilities;
 import javax.inject.Inject;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.Client;
@@ -26,6 +31,7 @@ import net.runelite.api.events.ItemContainerChanged;
 import net.runelite.api.events.StatChanged;
 import net.runelite.api.events.VarbitChanged;
 import net.runelite.api.gameval.InventoryID;
+import net.runelite.api.gameval.VarPlayerID;
 import net.runelite.api.gameval.VarbitID;
 import net.runelite.client.RuneLite;
 import net.runelite.client.config.ConfigManager;
@@ -35,6 +41,15 @@ import net.runelite.client.game.ItemStack;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
 import net.runelite.client.plugins.loottracker.LootReceived;
+import net.runelite.client.ui.ClientToolbar;
+import net.runelite.client.ui.NavigationButton;
+import okhttp3.Call;
+import okhttp3.Callback;
+import okhttp3.HttpUrl;
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.Response;
+import okhttp3.ResponseBody;
 
 /**
  * Bankstanding: records account events for the local dashboard.
@@ -102,7 +117,17 @@ public class BankstandingPlugin extends Plugin
 	@Inject
 	private ItemManager itemManager;
 
+	@Inject
+	private ClientToolbar clientToolbar;
+
+	@Inject
+	private OkHttpClient http;
+
 	private EventWriter writer;
+	private BankstandingPanel panel;
+	private NavigationButton navButton;
+	private ScheduledFuture<?> poller;
+	private int geItem = -1;
 	private final ChangeFilter filter = new ChangeFilter();
 	private final List<Map<String, Object>> pending = new ArrayList<>();
 	private final Map<Skill, Long> xpWritten = new HashMap<>();
@@ -122,6 +147,14 @@ public class BankstandingPlugin extends Plugin
 		{
 			runePouchDirty = true;
 		}
+		if (config.showPanel())
+		{
+			panel = new BankstandingPanel();
+			navButton = NavigationButton.builder().tooltip("Bankstanding").icon(BankstandingPanel.icon())
+				.priority(7).panel(panel).build();
+			clientToolbar.addNavigation(navButton);
+			poller = executor.scheduleWithFixedDelay(this::refreshPanel, 2, 30, TimeUnit.SECONDS);
+		}
 	}
 
 	@Override
@@ -132,6 +165,63 @@ public class BankstandingPlugin extends Plugin
 		name = null;
 		pending.clear();
 		filter.clear();
+		if (poller != null)
+		{
+			poller.cancel(false);
+			poller = null;
+		}
+		if (navButton != null)
+		{
+			clientToolbar.removeNavigation(navButton);
+			navButton = null;
+		}
+		panel = null;
+	}
+
+	// Side panel (reads the local app; display only) -----------------------------------
+
+	/** Asks the local Bankstanding app for a summary and shows it in the panel. */
+	private void refreshPanel()
+	{
+		BankstandingPanel p = panel;
+		if (p == null)
+		{
+			return;
+		}
+		HttpUrl base = HttpUrl.parse(config.appUrl().trim());
+		if (base == null)
+		{
+			SwingUtilities.invokeLater(() -> p.showMessage("The app address in the plugin settings is not valid."));
+			return;
+		}
+		HttpUrl.Builder url = base.newBuilder().addPathSegments("api/plugin/summary");
+		if (geItem > 0)
+		{
+			url.addQueryParameter("item", Integer.toString(geItem));
+		}
+		http.newCall(new Request.Builder().url(url.build()).build()).enqueue(new Callback()
+		{
+			@Override
+			public void onFailure(Call call, IOException e)
+			{
+				SwingUtilities.invokeLater(() -> p.showMessage("Start the Bankstanding app (start.bat) to see your net worth and suggested prices here."));
+			}
+
+			@Override
+			public void onResponse(Call call, Response response) throws IOException
+			{
+				try (ResponseBody b = response.body())
+				{
+					if (!response.isSuccessful() || b == null)
+					{
+						SwingUtilities.invokeLater(() -> p.showMessage("The app answered with an error (" + response.code() + ")."));
+						return;
+					}
+					JsonObject o = gson.fromJson(b.string(), JsonObject.class);
+					SwingUtilities.invokeLater(() -> p.show(o));
+				}
+			}
+		});
 	}
 
 	@Provides
@@ -194,6 +284,16 @@ public class BankstandingPlugin extends Plugin
 			writeRunePouch();
 		}
 		flushXp(false);
+		// The item picked on the GE offer screen: refresh the panel as soon as it changes.
+		int item = client.getVarpValue(VarPlayerID.TRADINGPOST_SEARCH);
+		if (item != geItem)
+		{
+			geItem = item;
+			if (panel != null && item > 0)
+			{
+				executor.execute(this::refreshPanel);
+			}
+		}
 	}
 
 	// Grand Exchange -------------------------------------------------------------------

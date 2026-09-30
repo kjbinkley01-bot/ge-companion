@@ -79,7 +79,7 @@ def fill_model(limit, lv24, hv24, lv1h, hv1h, share):
     return buy_rate, sell_rate, int(qty), fill_hrs
 
 
-def build_market(mapping, latest, h1_data, stats, tax, cfg, m5=None, m5_windows=0, now=None):
+def build_market(mapping, latest, h1_data, stats, tax, cfg, m5=None, m5_windows=0, now=None, share_fn=None):
     """One row per tradeable item with every computed field the dashboard needs."""
     now = now or time.time()
     m5 = m5 or {}
@@ -105,7 +105,8 @@ def build_market(mapping, latest, h1_data, stats, tax, cfg, m5=None, m5_windows=
         profit = (high - t - low) if (high and low) else None
         roi = (profit / low) if (profit is not None and low) else None
         limit = m.get("limit")
-        buy_rate, sell_rate, est_qty, fill_hrs = fill_model(limit, lv24, hv24, lv1, hv1, share)
+        item_share, share_src = share_fn(iid) if share_fn else (share, "setting")
+        buy_rate, sell_rate, est_qty, fill_hrs = fill_model(limit, lv24, hv24, lv1, hv1, item_share)
         ages = [now - x for x in (ht, lt_) if x]
         age = max(ages) if ages else None
         gap = abs(ht - lt_) if (ht and lt_) else None
@@ -153,6 +154,7 @@ def build_market(mapping, latest, h1_data, stats, tax, cfg, m5=None, m5_windows=
             "vol24": vol24, "hv24": hv24, "lv24": lv24,
             "buyPressure": (hv1 / (hv1 + lv1)) if (hv1 + lv1) else None,
             "estQty": est_qty, "buyRate": round(buy_rate, 2), "sellRate": round(sell_rate, 2),
+            "fillShare": item_share, "fillFrom": share_src,
             "fillHrs": round(fill_hrs, 2) if fill_hrs is not None else None,
             "capital": int(low * est_qty) if (low and est_qty) else None,
             "est4h": est4h, "adj4h": adj,

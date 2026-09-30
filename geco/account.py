@@ -43,6 +43,15 @@ CREATE TABLE IF NOT EXISTS loot (
 CREATE TABLE IF NOT EXISTS xp_log (
     acct TEXT NOT NULL, t INTEGER NOT NULL, skill TEXT NOT NULL, xp INTEGER, level INTEGER,
     PRIMARY KEY (acct, skill, t));
+CREATE TABLE IF NOT EXISTS ge_offer_log (
+    acct TEXT NOT NULL, slot INTEGER NOT NULL, opened INTEGER NOT NULL, closed INTEGER NOT NULL,
+    item INTEGER NOT NULL, side TEXT NOT NULL, price INTEGER, total INTEGER, done INTEGER, state TEXT,
+    caught_up INTEGER DEFAULT 0, PRIMARY KEY (acct, slot, opened));
+CREATE TABLE IF NOT EXISTS sessions (
+    acct TEXT NOT NULL, start INTEGER NOT NULL, last INTEGER NOT NULL, ended INTEGER DEFAULT 0,
+    PRIMARY KEY (acct, start));
+CREATE TABLE IF NOT EXISTS trade_tags (acct TEXT NOT NULL, item INTEGER NOT NULL, buy_ts INTEGER NOT NULL,
+    tag TEXT NOT NULL, PRIMARY KEY (acct, item, buy_ts));
 CREATE TABLE IF NOT EXISTS flip_ignore (acct TEXT NOT NULL, item INTEGER NOT NULL,
     PRIMARY KEY (acct, item));
 """
@@ -116,6 +125,7 @@ def apply_events(db, events):
         t = int((e.get("t") or time.time() * 1000) // 1000)
         _touch_account(db, acct, e.get("name"), t, e)
         kind = e.get("type")
+        _session(db, acct, t, kind)
         if kind == "offer":
             apply_offer(db, acct, t, e)
         elif kind == "container":
@@ -127,6 +137,29 @@ def apply_events(db, events):
         elif kind == "xp":
             db.run("INSERT OR REPLACE INTO xp_log (acct, t, skill, xp, level) VALUES (?,?,?,?,?)",
                    (acct, t, e.get("skill"), e.get("xp"), e.get("level")))
+
+
+SESSION_GAP = 20 * 60
+
+
+def _session(db, acct, t, kind):
+    """Play sessions: from login to logout, or to the last event before a 20 minute gap."""
+    cur = db.one("SELECT * FROM sessions WHERE acct=? ORDER BY start DESC LIMIT 1", (acct,))
+    if kind == "login" or not cur or cur["ended"] or t - cur["last"] > SESSION_GAP:
+        if kind == "logout":
+            return
+        if cur and not cur["ended"] and kind == "login":
+            db.run("UPDATE sessions SET ended=1 WHERE acct=? AND start=?", (acct, cur["start"]))
+        db.run("INSERT OR IGNORE INTO sessions (acct, start, last, ended) VALUES (?,?,?,0)", (acct, t, t))
+        return
+    db.run("UPDATE sessions SET last=MAX(last, ?), ended=? WHERE acct=? AND start=?",
+           (t, 1 if kind == "logout" else 0, acct, cur["start"]))
+
+
+def hours_played(db, since, acct=None):
+    rows = db.q("SELECT start, last FROM sessions WHERE last>=?" + (" AND acct=?" if acct else ""),
+                (since, acct) if acct else (since,))
+    return sum(max(0, r["last"] - max(r["start"], since)) for r in rows) / 3600.0
 
 
 def _touch_account(db, acct, name, t, e):
@@ -192,10 +225,24 @@ def apply_offer(db, acct, t, e):
         db.run("INSERT INTO ge_fills (acct, slot, t, item, side, qty, gp, offer_price, caught_up) "
                "VALUES (?,?,?,?,?,?,?,?,?)", (acct, slot, t, cur["item"], side, qty, gp, cur["price"], caught_up))
         last_fill = t
+    # Keep a log of each offer from open to finish (used to measure your real fill rates).
+    if prev and new and _side(prev["state"]) and prev["state"] in ACTIVE:
+        _log_offer(db, acct, slot, prev, prev["state"], prev["last_fill"] or prev["t"])
+    if side and cur["state"] not in ACTIVE:
+        base = cur if (new or not prev) else dict(prev, **cur)
+        _log_offer(db, acct, slot, dict(base, opened=opened), cur["state"], t,
+                   caught_up=1 if (prev is None or new) else 0)
     db.run("INSERT OR REPLACE INTO ge_offers (acct, slot, t, state, item, price, total, done, spent, opened, "
            "last_fill) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
            (acct, slot, t, cur["state"], cur["item"], cur["price"], cur["total"], cur["done"], cur["spent"],
             opened, last_fill))
+
+
+def _log_offer(db, acct, slot, o, state, closed, caught_up=0):
+    db.run("INSERT OR REPLACE INTO ge_offer_log (acct, slot, opened, closed, item, side, price, total, done, state, "
+           "caught_up) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+           (acct, slot, o.get("opened") or closed, closed, o["item"], _side(o["state"]) or _side(state), o["price"],
+            o["total"], o["done"], state, caught_up))
 
 
 # Sell proceeds and tax ------------------------------------------------------------------
@@ -271,16 +318,17 @@ def sync_flips(db, tax, keep_days=365):
     ignore = {(r["acct"], r["item"]) for r in db.q("SELECT acct, item FROM flip_ignore")}
     closed, open_lots = match_flips(fills, tax, ignore)
     rows = []
+    tags = {(r["acct"], r["item"], r["buy_ts"]): r["tag"] for r in db.q("SELECT * FROM trade_tags")}
     for c in closed:
         rows.append((c["item"], int(c["qty"]), int(round(c["buy_each"])), int(round(c["sell_each"])),
-                     c["buy_t"], c["sell_t"], None, "auto", c["acct"]))
+                     c["buy_t"], c["sell_t"], None, "auto", c["acct"], tags.get((c["acct"], c["item"], c["buy_t"]))))
     for lot in open_lots:
         rows.append((lot["item"], int(lot["qty"]), int(round(lot["each"])), None, lot["t"], None, None,
-                     "auto", lot["acct"]))
+                     "auto", lot["acct"], tags.get((lot["acct"], lot["item"], lot["t"]))))
     with db.lock:
         db.conn.execute("DELETE FROM flips WHERE source='auto'")
         db.conn.executemany("INSERT INTO flips (item_id, qty, buy_price, sell_price, buy_ts, sell_ts, note, "
-                            "source, acct) VALUES (?,?,?,?,?,?,?,?,?)", rows)
+                            "source, acct, tag) VALUES (?,?,?,?,?,?,?,?,?,?)", rows)
         db.conn.commit()
     return len(closed), len(open_lots)
 

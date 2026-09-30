@@ -62,6 +62,10 @@ def main():
 
     url = f"http://127.0.0.1:{port}"
     print(f"\nDashboard: {url}\nLeave this window open while you use it. Press Ctrl+C to stop.\n")
+    if cfg.get("lan_enabled") and len(cfg.get("lan_password") or "") >= 8:
+        from geco.server import lan_addresses
+        for ip in lan_addresses():
+            print(f"On your phone (same Wi-Fi): http://{ip}:{port}  (password from Settings)")
     if cfg.get("open_browser", True) and not args.no_browser:
         threading.Timer(1.0, lambda: webbrowser.open(url)).start()
     try:

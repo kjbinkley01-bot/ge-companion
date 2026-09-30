@@ -105,6 +105,10 @@ class WikiClient:
         """Jagex's Old School news feed (raw RSS bytes)."""
         return self._get_text(NEWS_RSS)
 
+    def guide_graph(self, item_id):
+        """Jagex's official guide price for one item: {"daily": {ms: price}, "average": {...}}."""
+        return self._get(f"https://secure.runescape.com/m=itemdb_oldschool/api/graph/{int(item_id)}.json")
+
     def hiscores(self, player, mode="normal"):
         board = HISCORE_BOARDS.get(mode, HISCORE_BOARDS["normal"])
         url = HISCORE_BASE.format(board=board, player=urllib.parse.quote(player))

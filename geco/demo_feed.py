@@ -105,6 +105,16 @@ class DemoFeed:
                     items=[[_id("Zulrah's scales"), 500], [_id("Magic logs"), 100]])
         self._write(now - 2 * 86400, "loot", source="General Graardor", kind="NPC",
                     items=[[_id("Bandos tassets"), 1]])
+        # Clue caskets, as RuneLite's Loot Tracker names them.
+        for k, (tier, items) in enumerate([("Hard", [[_id("Rune platebody"), 1], [_id("Nature rune"), 60]]),
+                                          ("Hard", [[_id("Amulet of fury"), 1]]),
+                                          ("Elite", [[_id("Dragon bones"), 40], [_id("Runite bar"), 8]]),
+                                          ("Medium", [[_id("Rune full helm"), 1], [_id("Shark"), 12]])]):
+            self._write(now - (5 - k) * 86400, "loot", source=f"Clue Scroll ({tier})", kind="EVENT", items=items)
+        # A play session yesterday.
+        self._write(now - 30 * 3600, "login", world=330)
+        self._write(now - 27 * 3600, "logout")
+        self._write(now - 3 * 3600, "login", world=302)
         # Current offers: a buy filling now, a sell waiting, and a buy priced under the market.
         whip = _id("Abyssal whip")
         hi, lo = self._price(whip, now)

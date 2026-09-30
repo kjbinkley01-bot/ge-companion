@@ -173,6 +173,19 @@ class DemoClient:
     def one_day(self, timestamp):
         return self._window(int(timestamp), 86400)
 
+    def guide_graph(self, item_id):
+        """Synthetic official guide price: the daily mid price, a day behind (as Jagex's lags)."""
+        item = next((i for i in ITEMS if i[0] == item_id), None)
+        if not item:
+            return {"daily": {}}
+        today = int(time.time()) // 86400 * 86400
+        out = {}
+        for k in range(180, 0, -1):
+            t = today - k * 86400
+            hi, lo = _price(item, t - 86400)
+            out[str(t * 1000)] = int((hi + lo) / 2)
+        return {"daily": out}
+
     def timeseries(self, item_id, lookback):
         step = {"6h": 300, "24h": 300, "7d": 3600, "30d": 21600, "6m": 86400, "1y": 86400}[lookback]
         span = {"6h": 6, "24h": 24, "7d": 168, "30d": 720, "6m": 4380, "1y": 8760}[lookback] * 3600

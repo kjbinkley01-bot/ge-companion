@@ -63,4 +63,26 @@ public interface BankstandingConfig extends Config
 	{
 		return "";
 	}
+
+	@ConfigItem(
+		keyName = "showPanel",
+		name = "Show side panel",
+		description = "A side panel with your net worth, suggested prices for the item on the GE screen and offers that need attention (reads the Bankstanding app on this computer; display only)",
+		position = 6
+	)
+	default boolean showPanel()
+	{
+		return true;
+	}
+
+	@ConfigItem(
+		keyName = "appUrl",
+		name = "App address",
+		description = "Where the Bankstanding app runs on this computer",
+		position = 7
+	)
+	default String appUrl()
+	{
+		return "http://127.0.0.1:8765";
+	}
 }

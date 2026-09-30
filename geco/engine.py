@@ -5,7 +5,7 @@ import os
 import threading
 import time
 
-from . import account, analytics, news, features, forecast, forecast_eval, hold, market, networth, recipes
+from . import account, analytics, brief, coach, edge, extras, fills, news, push, targets, wealth, features, forecast, forecast_eval, hold, market, networth, recipes
 from .config import DATA_DIR
 
 log = logging.getLogger("geco")
@@ -39,7 +39,13 @@ class Engine:
         account.init(db)
         networth.init(db)
         news.init(db)
+        for mod in (wealth, edge, targets, extras):
+            mod.init(db)
         self.demo_feed = None
+        self.fill_rates = None
+        self._notified = {}
+        self._last_coach = 0
+        self._rates_dirty = False
         self._demo_seeded = False
         self.live = {"events": 0, "last": None, "lastIngest": None, "folder": None}
         self._worth_at = 0
@@ -168,6 +174,7 @@ class Engine:
                 time.sleep(pause)
         with self.lock:
             self.status["backfill"] = "done"
+        self.refresh_fill_rates()
         self.refresh_stats()
         self.refresh_m5_stats()
         self.rebuild()
@@ -268,8 +275,11 @@ class Engine:
 
     def rebuild(self):
         with self.lock:
+            share_fn = None
+            if self.cfg.get("fill_share_measured", True) and self.fill_rates:
+                share_fn = fills.share_for(self.fill_rates, max(0.01, min(1.0, float(self.cfg.get("fill_share", 0.2)))))
             rows = market.build_market(self.mapping, self.latest, self.h1_data, self.stats,
-                                       self.tax, self.cfg, self.m5stats, self.m5_windows)
+                                       self.tax, self.cfg, self.m5stats, self.m5_windows, share_fn=share_fn)
             self.rows = rows
             self.by_id = {r["id"]: r for r in rows}
 
@@ -299,8 +309,7 @@ class Engine:
                 msg = market.check_alert(a, self.by_id.get(iid))
                 if not msg:
                     continue
-                self.db.run("INSERT INTO notifications (ts, alert_id, item_id, message) VALUES (?,?,?,?)",
-                            (now, a["aid"], iid, msg))
+                self.notify(msg, iid, event="alerts", alert_id=a["aid"], title="Price alert")
                 self._cooldowns[(a["aid"], iid)] = now
                 fired = True
                 if a["once"]:
@@ -321,12 +330,73 @@ class Engine:
             return
         for iid, used, _ in features.limit_resets(self.db, since, now):
             name = self.mapping.get(iid, {}).get("name", f"Item {iid}")
-            self.db.run("INSERT INTO notifications (ts, alert_id, item_id, message) VALUES (?,?,?,?)",
-                        (now, None, iid, f"{name} buy limit has reset (you bought {used:,} last window)"))
+            self.notify(f"{name} buy limit has reset (you bought {used:,} last window)", iid, event="limits",
+                        title="Buy limit reset")
+
+    def notify(self, message, item_id=None, event=None, key=None, cooldown=0, alert_id=None, title="Bankstanding"):
+        """Add an in-app notification and send it to your phone if that event is switched on."""
+        now = time.time()
+        if key is not None:
+            if now - self._notified.get(key, 0) < cooldown:
+                return False
+            self._notified[key] = now
+        self.db.run("INSERT INTO notifications (ts, alert_id, item_id, message) VALUES (?,?,?,?)",
+                    (int(now), alert_id, item_id, message))
+        if event:
+            push.send(self.cfg, title, message, event=event)
+        return True
+
+    def live_checks(self, since):
+        """After new plugin events: finished offers, then the offer coach (both notify)."""
+        for o in self.db.q("SELECT * FROM ge_offer_log WHERE closed>? AND state IN ('BOUGHT', 'SOLD') "
+                           "AND caught_up=0", (since,)):
+            self._rates_dirty = True
+            name = (self.mapping.get(o["item"]) or {}).get("name") or f"Item {o['item']}"
+            verb = "Bought" if o["side"] == "buy" else "Sold"
+            self.notify(f"{verb} {o['done']:,} {name} at {o['price']:,} (slot {o['slot'] + 1})", o["item"],
+                        event="fills", key=("done", o["acct"], o["slot"], o["opened"]), cooldown=10 ** 9,
+                        title="GE offer complete")
+
+    def target_checks(self):
+        try:
+            targets.check(self.db, self, lambda msg, iid: self.notify(msg, iid, event="alerts", title="Price target"))
+        except Exception as e:
+            self._err("price targets", e)
+
+    def coach_checks(self):
+        for c in coach.check(self.db, self, self.cfg):
+            if c["severity"] != "warn":
+                continue
+            key = ("coach", c["kind"], c.get("acct"), c.get("slot"), c["item"], c.get("price"))
+            self.notify(c["title"] + ". " + c["detail"], c["item"], event="coach", key=key, cooldown=6 * 3600,
+                        title="Offer coach")
+
+    def statement_check(self, now=None):
+        """Send the daily bank statement to your phone at the chosen time (once a day)."""
+        if not push.enabled(self.cfg, "statement"):
+            return
+        now = now or time.time()
+        hh, mm = (self.cfg.get("statement_time") or "08:00").split(":")
+        lt = time.localtime(now)
+        due = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, int(hh), int(mm), 0, 0, 0, -1))
+        today = time.strftime("%Y-%m-%d", lt)
+        if now < due or self.db.kv_get("statement_sent") == today:
+            return
+        self.db.kv_set("statement_sent", today)
+        st = brief.statement(self.db, self, self.cfg, since=now - 86400, now=now)
+        push.send(self.cfg, "Your bank statement", brief.text(st), event="statement")
+
+    def refresh_fill_rates(self):
+        """Measure your real fill share from logged GE offers (used by the flip model)."""
+        try:
+            self.fill_rates = fills.rates(self.db)
+        except Exception as e:
+            self._err("fill rates", e)
 
     def hourly_jobs(self):
         """Net worth snapshot, yesterday's daily history window and a daily database backup."""
         threading.Thread(target=self.import_daily, daemon=True, name="import").start()
+        self.refresh_fill_rates()
         try:
             features.networth_snapshot(self.db, self)
         except Exception as e:
@@ -369,6 +439,8 @@ class Engine:
             except Exception as e:
                 self._err("demo RuneLite feed", e)
         self.ingest_live()
+        self.refresh_fill_rates()
+        self.rebuild()
         threading.Thread(target=self.refresh_news, kwargs={"full": True}, daemon=True, name="news").start()
         threading.Thread(target=self._loop, daemon=True, name="poller").start()
         threading.Thread(target=self.backfill, daemon=True, name="backfill").start()
@@ -394,6 +466,14 @@ class Engine:
                     self.live["last"] = int(now)
             if n:
                 account.sync_flips(self.db, self.tax)
+                self.live_checks(int(now) - 120)
+            if self.rows and now - self._last_coach > 300:
+                self._last_coach = now
+                if self._rates_dirty:
+                    self._rates_dirty = False
+                    self.refresh_fill_rates()
+                self.coach_checks()
+                self.statement_check(now)
             if self.demo_feed and not self._demo_seeded and self.rows:
                 self._demo_seeded = networth.seed_demo(self.db, self, self.cfg) > 0
             # Net worth: after changes (at most every 5 minutes) and every 15 minutes for price moves.
@@ -444,6 +524,7 @@ class Engine:
                 if now >= next_latest:
                     next_latest = now + period
                     self.refresh_latest()
+                    self.target_checks()
             except Exception as e:
                 self._err("latest", e)
             try:
