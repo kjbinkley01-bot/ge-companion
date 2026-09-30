@@ -1,4 +1,4 @@
-package com.gecompanion;
+package com.bankstanding;
 
 import java.util.Arrays;
 import java.util.HashMap;

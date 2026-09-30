@@ -1,7 +1,7 @@
-"""Live account data from the GE Companion RuneLite plugin.
+"""Live account data from the Bankstanding RuneLite plugin.
 
 The plugin (runelite-plugin/) appends one JSON object per line to monthly files in
-~/.runelite/ge-companion. This module reads new lines incrementally, stores them, and
+~/.runelite/bankstanding. This module reads new lines incrementally, stores them, and
 derives:
 
   ge_offers   the latest state of each of your eight GE slots, per account
@@ -59,7 +59,10 @@ def init(db):
 
 
 def default_folder():
-    return os.path.join(os.path.expanduser("~"), ".runelite", "ge-companion")
+    base = os.path.join(os.path.expanduser("~"), ".runelite")
+    new, old = os.path.join(base, "bankstanding"), os.path.join(base, "ge-companion")
+    # Early builds of the plugin wrote to ge-companion.
+    return old if os.path.isdir(old) and not os.path.isdir(new) else new
 
 
 # Reading the plugin files ---------------------------------------------------------------

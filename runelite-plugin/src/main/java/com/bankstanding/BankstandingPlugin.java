@@ -1,4 +1,4 @@
-package com.gecompanion;
+package com.bankstanding;
 
 import com.google.gson.Gson;
 import com.google.inject.Provides;
@@ -37,19 +37,19 @@ import net.runelite.client.plugins.PluginDescriptor;
 import net.runelite.client.plugins.loottracker.LootReceived;
 
 /**
- * GE Companion: records account events for the local dashboard.
+ * Bankstanding: records account events for the local dashboard.
  *
  * Listen only. This plugin never clicks, moves the mouse, types, or changes anything in
  * the game. It subscribes to events RuneLite already provides and appends them as JSON
- * lines to a file on this computer, which the GE Companion app reads.
+ * lines to a file on this computer, which the Bankstanding app reads.
  */
 @Slf4j
 @PluginDescriptor(
-	name = "GE Companion",
-	description = "Records GE offers, holdings, loot and XP to a local file for the GE Companion dashboard",
+	name = "Bankstanding",
+	description = "Records GE offers, holdings, loot and XP to a local file for the Bankstanding dashboard",
 	tags = {"grand exchange", "flipping", "net worth", "portfolio", "wealth"}
 )
-public class GeCompanionPlugin extends Plugin
+public class BankstandingPlugin extends Plugin
 {
 	/** Containers that hold things you own, by the name the dashboard uses. */
 	static final Map<Integer, String> CONTAINERS = new HashMap<>();
@@ -88,7 +88,7 @@ public class GeCompanionPlugin extends Plugin
 	private Client client;
 
 	@Inject
-	private GeCompanionConfig config;
+	private BankstandingConfig config;
 
 	@Inject
 	private ConfigManager configManager;
@@ -115,9 +115,9 @@ public class GeCompanionPlugin extends Plugin
 	protected void startUp()
 	{
 		String custom = config.outputFolder().trim();
-		File folder = custom.isEmpty() ? new File(RuneLite.RUNELITE_DIR, "ge-companion") : new File(custom);
+		File folder = custom.isEmpty() ? new File(RuneLite.RUNELITE_DIR, "bankstanding") : new File(custom);
 		writer = new EventWriter(gson, folder);
-		log.debug("GE Companion writing to {}", folder);
+		log.debug("Bankstanding writing to {}", folder);
 		if (client.getGameState() == GameState.LOGGED_IN)
 		{
 			runePouchDirty = true;
@@ -135,9 +135,9 @@ public class GeCompanionPlugin extends Plugin
 	}
 
 	@Provides
-	GeCompanionConfig provideConfig(ConfigManager configManager)
+	BankstandingConfig provideConfig(ConfigManager configManager)
 	{
-		return configManager.getConfig(GeCompanionConfig.class);
+		return configManager.getConfig(BankstandingConfig.class);
 	}
 
 	// Account --------------------------------------------------------------------------

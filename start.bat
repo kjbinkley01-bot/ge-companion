@@ -1,5 +1,5 @@
 @echo off
-title GE Companion
+title Bankstanding
 cd /d "%~dp0"
 where py >nul 2>nul
 if %errorlevel%==0 (

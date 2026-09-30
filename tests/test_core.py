@@ -1,4 +1,4 @@
-"""Unit tests for GE Companion's math. Standard library only:
+"""Unit tests for Bankstanding's math. Standard library only:
 
     python -m unittest discover -s tests
 """

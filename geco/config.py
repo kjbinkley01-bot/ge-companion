@@ -1,4 +1,4 @@
-"""Settings for GE Companion. Stored in data/config.json and editable by hand or in the app."""
+"""Settings for Bankstanding. Stored in data/config.json and editable by hand or in the app."""
 import json
 import os
 
@@ -10,7 +10,7 @@ CONFIG_PATH = os.path.join(DATA_DIR, "config.json")
 DEFAULTS = {
     # The Wiki asks every tool to send a descriptive User-Agent. Adding a Discord
     # name here is optional but lets the Wiki team reach you about API changes.
-    "user_agent": "GE Companion - personal local price dashboard",
+    "user_agent": "Bankstanding - personal local price dashboard",
     "port": 8765,
     "open_browser": True,
     "latest_poll_seconds": 60,
@@ -30,7 +30,7 @@ DEFAULTS = {
     # Days of daily market history to import from the Wiki's bulk /24h endpoint (one request
     # per day of history, once). Feeds the forecast and its backtest. 0 turns it off.
     "history_import_days": 730,
-    # RuneLite plugin folder (blank: ~/.runelite/ge-companion) and net worth valuation.
+    # RuneLite plugin folder (blank: ~/.runelite/bankstanding) and net worth valuation.
     "runelite_folder": "",
     "networth_value": "sell",
     "networth_include_manual": True,
@@ -70,6 +70,8 @@ def load():
             pass
     # v3: the holding outlook needs two years of daily history; lift the old 365 default.
     if cfg.get("config_version", 1) < 3:
+        if cfg.get("user_agent") == "GE Companion - personal local price dashboard":
+            cfg["user_agent"] = DEFAULTS["user_agent"]  # the app was renamed
         if cfg.get("history_import_days") == 365:
             cfg["history_import_days"] = 730
         cfg["config_version"] = 3

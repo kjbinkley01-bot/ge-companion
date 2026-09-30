@@ -1,4 +1,4 @@
-# GE Companion: notes for Claude Code
+# Bankstanding: notes for Claude Code
 
 Personal Old School RuneScape Grand Exchange and account tool that runs locally on Windows.
 A free alternative to GE Tracker premium, built only on public, read-only data.
@@ -45,7 +45,7 @@ A free alternative to GE Tracker premium, built only on public, read-only data.
   "no change" on held out months, otherwise the outlook centers on no change with odds and
   ranges from real moves. Ships `geco/hold_model.json` (two years, Sep 2026: no signal passed).
 * `runelite-plugin/`: RuneLite plugin (Java 11, Gradle, `run-plugin.bat` or `gradlew run`
-  sideloads it). Writes JSON lines to `~/.runelite/ge-companion/events-YYYY-MM.jsonl`:
+  sideloads it). Writes JSON lines to `~/.runelite/bankstanding/events-YYYY-MM.jsonl`:
   `{v, t (ms), type, acct (rsprofile key), name, ...}` with types login, logout, offer (slot,
   state, item, price, total, done, spent: cumulative), container (bank, inventory, equipment,
   looting_bag, seed_vault, rune_pouch, death_storage, ge_collect_0..7; items as [[id, qty]],

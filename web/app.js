@@ -1,4 +1,4 @@
-/* GE Companion dashboard. Talks only to the local server at the same origin. */
+/* Bankstanding dashboard. Talks only to the local server at the same origin. */
 "use strict";
 
 // Utilities ----------------------------------------------------------------------
@@ -1223,7 +1223,7 @@ renderers.networth = async function (host, soft) {
 
 function setupCard(st) {
   return `<div class="card setup" style="margin-bottom:14px"><h3 style="margin-top:0">Connect your account with the RuneLite plugin</h3>
-    <p class="small">The GE Companion plugin listens to RuneLite's own events (your GE offers, bank, inventory, equipment, loot) and writes them to a file on this computer. It never sends input to the game or reads the screen. This app reads that file, so trades and holdings update on their own.</p>
+    <p class="small">The Bankstanding plugin listens to RuneLite's own events (your GE offers, bank, inventory, equipment, loot) and writes them to a file on this computer. It never sends input to the game or reads the screen. This app reads that file, so trades and holdings update on their own.</p>
     <ol class="small">
       <li>Install Java 11 or newer (Adoptium Temurin is free).</li>
       <li>In the <code>runelite-plugin</code> folder of this app, double-click <code>run-plugin.bat</code> (or run <code>gradlew run</code>). This opens RuneLite with the plugin loaded.</li>
@@ -2526,7 +2526,7 @@ renderers.settings = async function (host) {
         </div>
         <h3>Account (RuneLite plugin)</h3>
         <div class="inline-form" style="margin-top:0">
-          <label class="field wide" title="Where the GE Companion RuneLite plugin writes its files. Blank uses the default."><span>Plugin folder</span><input class="input" id="stRl" value="${esc(cfg.runelite_folder || "")}" placeholder="Default: .runelite/ge-companion in your user folder"></label>
+          <label class="field wide" title="Where the Bankstanding RuneLite plugin writes its files. Blank uses the default."><span>Plugin folder</span><input class="input" id="stRl" value="${esc(cfg.runelite_folder || "")}" placeholder="Default: .runelite/bankstanding in your user folder"></label>
           <label class="field" title="Sell price after tax is what you would get listing everything at the going rate. Mid price is closer to price sites."><span>Value items at</span><select class="input" id="stNwv"><option value="sell" ${cfg.networth_value !== "market" ? "selected" : ""}>Sell price after tax</option><option value="market" ${cfg.networth_value === "market" ? "selected" : ""}>Mid price</option></select></label>
           <label class="check"><input type="checkbox" id="stNwm" ${cfg.networth_include_manual !== false ? "checked" : ""}> Include Portfolio tab holdings in the all accounts net worth</label>
         </div>
@@ -2745,7 +2745,7 @@ document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("#dra
 makePicker($("#globalSearch"), $("#globalResults"), (r) => { $("#globalSearch").value = ""; openItem(r.id); });
 
 // Polling ------------------------------------------------------------------------
-function setBell(n) { const b = $("#bellCount"); b.hidden = !n; b.textContent = n; document.title = n ? `(${n}) GE Companion` : "GE Companion"; }
+function setBell(n) { const b = $("#bellCount"); b.hidden = !n; b.textContent = n; document.title = n ? `(${n}) Bankstanding` : "Bankstanding"; }
 $("#bell").onclick = () => showTab("alerts");
 
 function beep() {
@@ -2769,7 +2769,7 @@ async function pollNotifications() {
       if (document.hidden && desktopState() === "granted" && store.get("desktop", true)) {
         fresh.slice(0, 3).forEach((x) => {
           try {
-            const nt = new Notification("GE Companion", { body: x.message, tag: "geco-" + x.nid });
+            const nt = new Notification("Bankstanding", { body: x.message, tag: "geco-" + x.nid });
             nt.onclick = () => { window.focus(); if (x.item_id) openItem(x.item_id); nt.close(); };
           } catch (e) { /* notifications unavailable */ }
         });

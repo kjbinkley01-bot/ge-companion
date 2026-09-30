@@ -14,7 +14,7 @@ repositories {
 }
 
 def runeLiteVersion = 'latest.release'
-def pluginMainClass = 'com.gecompanion.GeCompanionPluginTest'
+def pluginMainClass = 'com.bankstanding.BankstandingPluginTest'
 
 dependencies {
 	compileOnly group: 'net.runelite', name: 'client', version: runeLiteVersion
@@ -29,7 +29,7 @@ dependencies {
 	testAnnotationProcessor 'org.projectlombok:lombok:1.18.30'
 }
 
-group = 'com.gecompanion'
+group = 'com.bankstanding'
 version = '1.0.0'
 
 tasks.withType(JavaCompile).configureEach {

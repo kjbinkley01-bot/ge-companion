@@ -1,4 +1,4 @@
-package com.gecompanion;
+package com.bankstanding;
 
 import com.google.gson.Gson;
 import java.io.File;
@@ -66,7 +66,7 @@ public class EventWriter
 		{
 			if (!folder.exists() && !folder.mkdirs())
 			{
-				log.warn("GE Companion: could not create {}", folder);
+				log.warn("Bankstanding: could not create {}", folder);
 				return;
 			}
 			long t = ((Number) event.get("t")).longValue();
@@ -75,7 +75,7 @@ public class EventWriter
 		}
 		catch (IOException ex)
 		{
-			log.warn("GE Companion: could not write event", ex);
+			log.warn("Bankstanding: could not write event", ex);
 		}
 	}
 }

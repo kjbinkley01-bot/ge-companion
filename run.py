@@ -1,4 +1,4 @@
-"""GE Companion: start the local price engine and open the dashboard.
+"""Bankstanding: start the local price engine and open the dashboard.
 
 Usage:
     python run.py           live data from the OSRS Wiki
@@ -22,7 +22,7 @@ from geco.server import App, serve  # noqa: E402
 
 
 def main():
-    ap = argparse.ArgumentParser(description="GE Companion")
+    ap = argparse.ArgumentParser(description="Bankstanding")
     ap.add_argument("--demo", action="store_true", help="use offline synthetic data")
     ap.add_argument("--no-browser", action="store_true")
     ap.add_argument("--port", type=int)
@@ -43,8 +43,8 @@ def main():
 
     db = DB(db_path)
     engine = Engine(cfg, client, db)
-    print("GE Companion: loading item list and prices from the OSRS Wiki..." if not args.demo
-          else "GE Companion: demo mode (synthetic prices)")
+    print("Bankstanding: loading item list and prices from the OSRS Wiki..." if not args.demo
+          else "Bankstanding: demo mode (synthetic prices)")
     try:
         engine.start()
     except Exception as e:
@@ -56,7 +56,7 @@ def main():
     try:
         httpd = serve(App(cfg, engine, db, client), port)
     except OSError:
-        print(f"\nPort {port} is busy. GE Companion may already be running: "
+        print(f"\nPort {port} is busy. Bankstanding may already be running: "
               f"open http://127.0.0.1:{port} in your browser.")
         sys.exit(1)
 

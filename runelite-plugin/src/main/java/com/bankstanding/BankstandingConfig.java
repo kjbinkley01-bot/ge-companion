@@ -1,13 +1,13 @@
-package com.gecompanion;
+package com.bankstanding;
 
 import net.runelite.client.config.Config;
 import net.runelite.client.config.ConfigGroup;
 import net.runelite.client.config.ConfigItem;
 
-@ConfigGroup(GeCompanionConfig.GROUP)
-public interface GeCompanionConfig extends Config
+@ConfigGroup(BankstandingConfig.GROUP)
+public interface BankstandingConfig extends Config
 {
-	String GROUP = "gecompanion";
+	String GROUP = "bankstanding";
 
 	@ConfigItem(
 		keyName = "recordOffers",
@@ -56,7 +56,7 @@ public interface GeCompanionConfig extends Config
 	@ConfigItem(
 		keyName = "outputFolder",
 		name = "Output folder",
-		description = "Where event files are written. Blank means .runelite/ge-companion in your home folder",
+		description = "Where event files are written. Blank means .runelite/bankstanding in your home folder",
 		position = 5
 	)
 	default String outputFolder()

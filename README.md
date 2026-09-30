@@ -1,6 +1,9 @@
-# GE Companion
+# Bankstanding
 
-A personal, all in one Old School RuneScape market and account tool that runs on your own PC.
+*Standing at the bank, professionally.*
+
+A personal, all in one Old School RuneScape market and wealth tool that runs on your own PC.
+Bankstanding is the most mocked activity in the game; this is how it becomes your richest skill.
 Live Grand Exchange data comes from the OSRS Wiki's free real-time prices API, and stats come
 from the official hiscores.
 
@@ -25,11 +28,11 @@ Want to look around offline? Run `start.bat --demo` for synthetic prices.
 
 ## Connect your account (optional, recommended)
 
-The GE Companion RuneLite plugin (in `runelite-plugin/`) records your GE offers as they fill,
+The Bankstanding RuneLite plugin (in `runelite-plugin/`) records your GE offers as they fill,
 your bank, inventory, equipment, looting bag, seed vault, rune pouch and Death's storage, loot
 and XP. With it running, the Net worth tab shows your whole account valued live, and every GE
 trade lands in the flip log on its own. Nothing is sent anywhere: the plugin writes to
-`.runelite/ge-companion` in your user folder and this app reads it.
+`.runelite/bankstanding` in your user folder and this app reads it.
 
 1. Install Java 11 or newer (Adoptium Temurin is free).
 2. Double-click `runelite-plugin/run-plugin.bat` (or run `gradlew run` in that folder). The

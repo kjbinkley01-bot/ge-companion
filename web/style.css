@@ -74,10 +74,7 @@ a:hover { text-decoration: underline; }
   position: sticky; top: 0; z-index: 30;
 }
 .brand { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 15px; white-space: nowrap; }
-.coin {
-  width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: var(--bg);
-  display: grid; place-items: center; font-size: 11px; font-weight: 800;
-}
+.brand .logo { width: 28px; height: 28px; flex: none; }
 .search-wrap { position: relative; flex: 1; max-width: 460px; }
 .top-right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
 .live { display: flex; align-items: center; gap: 6px; color: var(--text-2); font-size: 12px; margin-right: 4px; }
