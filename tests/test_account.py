@@ -28,8 +28,8 @@ class FakeEngine:
         self.by_id = {r["id"]: r for r in self.rows}
 
 
-def ev(t, kind, **f):
-    e = {"v": 1, "t": int(t * 1000), "type": kind, "acct": ACCT, "name": "Zezima"}
+def ev(t, etype, **f):
+    e = {"v": 1, "t": int(t * 1000), "type": etype, "acct": ACCT, "name": "Zezima"}
     e.update(f)
     return e
 

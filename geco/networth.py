@@ -38,9 +38,19 @@ CREATE TABLE IF NOT EXISTS cost_seed (
 """
 
 
+# Cumulative return attribution columns (gp since tracking began, and a time weighted
+# return index that ignores income): see record().
+ATTRIB_COLS = [("mkt", "INTEGER"), ("trade", "INTEGER"), ("loot", "INTEGER"), ("other", "INTEGER"),
+               ("twr", "REAL")]
+
+
 def init(db):
     with db.lock:
         db.conn.executescript(SCHEMA)
+        have = {r[1] for r in db.conn.execute("PRAGMA table_info(account_worth)")}
+        for col, typ in ATTRIB_COLS:
+            if col not in have:
+                db.conn.execute(f"ALTER TABLE account_worth ADD COLUMN {col} {typ}")
         db.conn.commit()
 
 
@@ -217,7 +227,7 @@ def seed_costs(db, engine, acct, containers, now=None):
     # Each item is seeded once, except that the first sight of a storage (usually the bank,
     # opened after the inventory was already seen) tops up what it adds.
     key = "seeded_containers:" + acct
-    before = set(json.loads(db.kv_get(key, "[]") or "[]"))
+    before = set(db.kv_get(key, []) or [])
     now_seen = {c for c in containers if c != "manual" and containers[c]}
     new_storage = bool(now_seen - before)
     done = set() if new_storage else {r["item"] for r in db.q("SELECT item FROM cost_seed WHERE acct=?", (acct,))}
@@ -232,7 +242,7 @@ def seed_costs(db, engine, acct, containers, now=None):
     if rows:
         db.many("INSERT OR IGNORE INTO cost_seed (acct, item, t, qty, each) VALUES (?,?,?,?,?)", rows)
     if new_storage:
-        db.kv_set(key, json.dumps(sorted(before | now_seen)))
+        db.kv_set(key, sorted(before | now_seen))
     return len(rows)
 
 
@@ -389,22 +399,103 @@ def combined_view(db, engine, cfg):
 
 # History --------------------------------------------------------------------------------
 
+def attribute(db, engine, cfg, key, view, now):
+    """Split the change since the last recording into where it came from.
+
+      mkt    price moves on what was held at the last recording
+      trade  GE trades: the gap between what you paid or received and the item's value
+      loot   drops from the Loot Tracker, at today's value
+      other  everything else: skilling, alching, spending, eating, player trades, deaths
+
+    Returns cumulative totals since tracking began, plus a time weighted return index
+    (twr) that only moves with mkt and trade, so adding loot or cash does not count as
+    performance. The snapshot needed for the next step is kept in the kv table.
+    """
+    valuer = Valuer(engine, cfg.get("networth_value", "sell"))
+    snap_key = "worth_snap:" + key
+    snap = db.kv_get(snap_key)
+    last = db.one("SELECT mkt, trade, loot, other, twr FROM account_worth WHERE acct=? AND ts<=? "
+                  "ORDER BY ts DESC LIMIT 1", (key, now))
+    cum = {k: (last[k] if last and last[k] is not None else 0) for k in ("mkt", "trade", "loot", "other")}
+    twr = last["twr"] if last and last["twr"] else 1.0
+    items_now = {str(h["id"]): [h["qty"], h["each"]] for h in view["holdings"]}
+    if snap and snap.get("ts", 0) < now:
+        t0 = snap["ts"]
+        mkt = 0.0
+        for iid, (qty, each0) in snap["items"].items():
+            each1 = items_now[iid][1] if iid in items_now else valuer.each(int(iid))[0]
+            mkt += qty * (each1 - each0)
+        acct_clause, args = ("", [t0, now]) if key == "*" else (" AND acct=?", [t0, now, key])
+        trade = 0.0
+        for f in db.q("SELECT * FROM ge_fills WHERE t>? AND t<=?" + acct_clause, args):
+            each = valuer.each(f["item"])[0]
+            if f["side"] == "buy":
+                trade += f["qty"] * each - f["gp"]
+            else:
+                _, _, net = account.sell_split(f["gp"], f["qty"], f["offer_price"] or 0, engine.tax, f["item"])
+                trade += net - f["qty"] * each
+        loot = 0.0
+        for row in db.q("SELECT items FROM loot WHERE t>? AND t<=?" + acct_clause, args):
+            for iid, qty in json.loads(row["items"]):
+                loot += qty * valuer.each(iid)[0]
+        other = view["total"] - snap["total"] - mkt - trade - loot
+        if snap["total"] > 0:
+            twr *= 1 + (mkt + trade) / snap["total"]
+        cum["mkt"] += mkt
+        cum["trade"] += trade
+        cum["loot"] += loot
+        cum["other"] += other
+    db.kv_set(snap_key, {"ts": now, "total": view["total"], "items": items_now})
+    return {k: int(round(v)) for k, v in cum.items()}, twr
+
+
 def record(db, engine, cfg, now=None, bucket=300):
     """Save each account's and the combined net worth (at most one point per 5 minutes)."""
     now = int(now or time.time())
     ts = now // bucket * bucket
     rows = []
+
+    def add(key, v):
+        cum, twr = attribute(db, engine, cfg, key, v, now)
+        rows.append((key, ts, int(v["total"]), int(v["cash"]), int(v["items"]), int(v["ge"]),
+                     cum["mkt"], cum["trade"], cum["loot"], cum["other"], twr))
+
     for a in account.accounts(db):
         seed_costs(db, engine, a["acct"], raw_holdings(db, a["acct"])[0], now)
         v = account_view(db, engine, a["acct"], cfg)
         if v["holdings"]:
-            rows.append((a["acct"], ts, int(v["total"]), int(v["cash"]), int(v["items"]), int(v["ge"])))
+            add(a["acct"], v)
     c = combined_view(db, engine, cfg)
     if c["holdings"]:
-        rows.append(("*", ts, int(c["total"]), int(c["cash"]), int(c["items"]), int(c["ge"])))
+        add("*", c)
     if rows:
-        db.many("INSERT OR REPLACE INTO account_worth (acct, ts, total, cash, items, ge) VALUES (?,?,?,?,?,?)", rows)
+        db.many("INSERT OR REPLACE INTO account_worth (acct, ts, total, cash, items, ge, mkt, trade, loot, other, "
+                "twr) VALUES (?,?,?,?,?,?,?,?,?,?,?)", rows)
     return len(rows)
+
+
+def performance(db, acct, days=None, now=None):
+    """Attribution and time weighted return over a period, from the recorded history."""
+    key = acct or "*"
+    now = now or time.time()
+    since = int(now - days * 86400) if days else 0
+    rows = db.q("SELECT ts, total, mkt, trade, loot, other, twr FROM account_worth WHERE acct=? AND ts>=? "
+                "ORDER BY ts", (key, since))
+    if days:
+        before = db.one("SELECT ts, total, mkt, trade, loot, other, twr FROM account_worth WHERE acct=? AND ts<? "
+                        "ORDER BY ts DESC LIMIT 1", (key, since))
+        if before:
+            rows = [before] + rows
+    if len(rows) < 2:
+        return {"ok": False, "points": len(rows)}
+    a, b = rows[0], rows[-1]
+    g = lambda r, k: r[k] or 0  # noqa: E731
+    t0 = a["twr"] or 1.0
+    series = [{"t": r["ts"], "v": (r["twr"] or 1.0) / t0 - 1} for r in rows]
+    parts = {k: g(b, k) - g(a, k) for k in ("mkt", "trade", "loot", "other")}
+    return {"ok": True, "from": a["ts"], "to": b["ts"], "start": a["total"], "end": b["total"],
+            "change": b["total"] - a["total"], "parts": parts,
+            "returnPct": (b["twr"] or 1.0) / t0 - 1, "series": series}
 
 
 def seed_demo(db, engine, cfg, days=14):
@@ -420,9 +511,21 @@ def seed_demo(db, engine, cfg, days=14):
         for i, p in enumerate(pts):
             # Cash grows a little each day, as it would from trading.
             extra = int(view["cash"] * 0.004 * (i - len(pts)))
-            rows.append((key, p["ts"], p["total"] + extra, int(view["cash"]) + extra, p["total"] - int(view["cash"]), 0))
+            total = p["total"] + extra
+            if i == 0:
+                cum, twr, prev = {"mkt": 0, "trade": 0}, 1.0, total
+            else:
+                step_trade = int(view["cash"] * 0.004)
+                step_mkt = total - prev - step_trade
+                twr *= 1 + (step_mkt + step_trade) / prev
+                cum["mkt"] += step_mkt
+                cum["trade"] += step_trade
+                prev = total
+            rows.append((key, p["ts"], total, int(view["cash"]) + extra, p["total"] - int(view["cash"]), 0,
+                         cum["mkt"], cum["trade"], 0, 0, twr))
     if rows:
-        db.many("INSERT OR REPLACE INTO account_worth (acct, ts, total, cash, items, ge) VALUES (?,?,?,?,?,?)", rows)
+        db.many("INSERT OR REPLACE INTO account_worth (acct, ts, total, cash, items, ge, mkt, trade, loot, other, twr) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?)", rows)
     return len(rows)
 
 
@@ -454,7 +557,11 @@ def _daily_prices(db, engine, ids, days):
     now = time.time()
     since = int(now - days * 86400)
     hist_d = db.history_many(ids, since, table="d1")
-    hist_h = db.history_many(ids, since)
+    # Hourly rows are only needed after the imported daily history ends (usually a day or
+    # two); reading a year of hourly rows for hundreds of items would be slow.
+    last_d1 = (db.one("SELECT MAX(ts) AS t FROM d1") or {}).get("t")
+    h_since = max(since, int(last_d1) - 86400) if last_d1 and last_d1 > since else since
+    hist_h = db.history_many(ids, h_since)
     out = {}
     for iid in ids:
         hourly = forecast.daily_series(hist_h.get(iid, []), engine.tax, iid)

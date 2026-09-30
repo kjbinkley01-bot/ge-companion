@@ -60,10 +60,33 @@ A free alternative to GE Tracker premium, built only on public, read-only data.
   history in `account_worth` (5 minute buckets, per account and `*` combined), backcast of
   today's holdings at past prices.
 * `geco/advice.py`: recommendations from what an account holds, each with a confidence label.
+* Attribution (`networth.attribute`, run on every `record`): each account and `*` keep a kv
+  snapshot; the change since the last recording splits into `mkt` (price moves on what was
+  held), `trade` (GE fills vs item value), `loot` and `other`, stored cumulatively in
+  `account_worth` with `twr`, a time weighted return index that ignores income.
+  `networth.performance` reads a period from it.
+* `geco/risk.py`: daily market index (top 150 by gp traded, 5% weight cap), benchmark series,
+  account risk (daily swing, historical VaR, drawdown, beta, risk share, days to sell).
+* `geco/news.py`: game updates, dev blogs, polls, future updates from the Wiki's Update
+  namespace (MediaWiki API, bulk: category lists, then 20 posts' text per request) and the
+  Jagex news RSS. Tags tradeable items (Wiki links, or full names of two words or more).
+  First start imports 800 days, then RSS every 30 minutes and the Wiki every 6 hours.
+  Demo mode writes synthetic posts. `news_enabled` in config turns it off.
+* `geco/events.py`: event study. Abnormal move (item minus market index) around each post and
+  mentioned item for pre7, d1, d7, d30 windows, with a random ordinary day control and t stats.
+* `geco/indicators.py`: SMA, EMA, RSI, Bollinger, and a report replaying 8 daily signals over
+  the history (7 and 30 day moves after tax, beyond the market and a random day control,
+  split into older and newer halves). The hourly backtester also has rsi, ma_cross, bollinger.
 * `geco/demo_feed.py`: writes plugin format events in demo mode (`data/demo-runelite`).
 * `geco/server.py`: JSON API plus static files, bound to 127.0.0.1.
 * `web/`: vanilla JS dashboard (`app.js`), no build step. Charts are hand-rolled SVG
-  (`priceChart`, `lineChart`, `barChart`, `heatmap`), colors are CSS tokens in `style.css`.
+  (`priceChart`, `lineChart`, `barChart`, `heatmap`, `tradingChart`, `treemap`), colors are
+  CSS tokens in `style.css`. The theme follows Robinhood Legend (black canvas, green brand,
+  orange-red down). Series colors were checked with the dataviz palette validator in both
+  themes; up and down always carry a second cue (sign, hollow vs filled candles).
+  The Terminal tab is a linked workspace: list, chart, quote/position and news panels all
+  follow `TM.id`, with keyboard shortcuts. Candles are approximate (built from window
+  averages: close = mid, open = previous close, wicks = avg instant buy and sell).
 * `tests/`: `python -m unittest discover -s tests` (standard library only).
 * `data/`: runtime files (config, database, backups, cached mapping). Git ignored.
 
@@ -90,6 +113,9 @@ notifications, KC gains, drop log with dry streaks, flip analytics, backups and 
 and a Forecast tab (expected profit with likely range over 7/30/90 days).
 v3: RuneLite plugin for live account data, Net worth tab (portfolio style valuation, history,
 allocation, live GE slots, recommendations), automatic flip log from real trades.
+v4: Terminal (linked workspace, candles, indicators, compare, price lines, news flags), News
+tab with an event study, performance vs a market index with return attribution, risk panel,
+holdings and market heatmaps, indicator report, Legend style theme.
 Open questions to verify in game: whether a sell offer's `spent` is before or after tax
 (`account.sell_split` handles both), and how promptly collection box containers update.
 Hiscores response format verified against the live endpoint (Sep 2026).

@@ -8,7 +8,7 @@ import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import account, advice, analytics, config, features, forecast, forecast_eval, hold, market, networth, recipes
+from . import account, advice, analytics, events, indicators, news, risk, config, features, forecast, forecast_eval, hold, market, networth, recipes
 from .wiki import ApiError
 
 
@@ -146,7 +146,7 @@ def make_handler(app):
             if path == "/api/timeseries":
                 return self._send(200, app.client.timeseries(int(q["id"]), q.get("lookback", "24h")))
             if path == "/api/localhistory":
-                table = "m5" if q.get("res") == "5m" else "h1"
+                table = {"5m": "m5", "1d": "d1"}.get(q.get("res"), "h1")
                 days = float(q.get("days", 30))
                 rows = D.history(table, int(q["id"]), int(time.time() - days * 86400))
                 return self._send(200, {"data": [{"timestamp": r["ts"], "avgHighPrice": r["ah"],
@@ -309,6 +309,54 @@ def make_handler(app):
                 })
             if path == "/api/recipes/item":
                 return self._send(200, recipes.recipes_using(E.pricer(), int(q["id"]), D))
+            # Trading terminal, performance, risk, news --------------------------------
+            if path == "/api/performance":
+                acct = q.get("acct") or None
+                days = float(q["days"]) if q.get("days") not in (None, "", "all") else None
+                perf = networth.performance(D, acct, days)
+                if perf.get("ok"):
+                    bench = risk.benchmark(D, E, perf["from"])
+                    perf["benchmark"] = bench
+                    perf["marketPct"] = bench[-1]["v"] if bench else None
+                    if perf["marketPct"] is not None:
+                        perf["excess"] = perf["returnPct"] - perf["marketPct"]
+                return self._send(200, perf)
+            if path == "/api/risk":
+                acct = q.get("acct") or None
+                return self._send(200, analytics.cached(("risk", acct or "*", int(time.time() // 600)), 600,
+                                                        lambda: risk.account_risk(D, E, _view(app, acct), app.cfg)))
+            if path == "/api/marketindex":
+                days = max(2, min(800, int(float(q.get("days", 365)))))
+                return self._send(200, {"series": risk.market_index(D, E, days)["series"]})
+            if path == "/api/news":
+                held = set()
+                try:
+                    held = {h["id"] for h in networth.combined_view(D, E, app.cfg)["holdings"]}
+                except Exception:
+                    pass
+                item = int(q["item"]) if q.get("item") else None
+                rows = news.feed(D, E.mapping, float(q.get("days", 60)), q.get("kind") or None, item,
+                                 int(q.get("limit", 150)), held)
+                return self._send(200, {"items": rows, "status": news.status(D)})
+            if path == "/api/events/study":
+                return self._send(200, _background(("study", E.params_version), 6 * 3600,
+                                                   lambda: events.study(D, E)))
+            if path == "/api/events/item":
+                iid = int(q["id"])
+                return self._send(200, analytics.cached(("evitem", iid), 3600, lambda: events.item_history(D, E, iid)))
+            if path == "/api/indicators/report":
+                return self._send(200, _background(("indicators", E.params_version), 12 * 3600,
+                                                   lambda: indicators.report(D, E.tax, E)))
+            if path == "/api/heatmap":
+                rows, _ = self._market_rows()
+                liquid = [r for r in rows if r.get("vol24") and r.get("high") and r.get("chg24h") is not None]
+                liquid.sort(key=lambda r: -(r["vol24"] * r["high"]))
+                out = [{"id": r["id"], "name": r["name"], "icon": r.get("icon"), "value": r["vol24"] * r["high"],
+                        "chg": r["chg24h"], "chg7d": r.get("chg7d"), "price": r["high"],
+                        "category": networth.category(r["name"])} for r in liquid[:int(q.get("n", 200))]]
+                return self._send(200, {"items": out})
+            if path == "/api/terminal":
+                return self._send(200, _terminal(app, int(q["id"])))
             # Live account (RuneLite plugin) --------------------------------------
             if path == "/api/account/status":
                 return self._send(200, _account_status(app))
@@ -571,6 +619,76 @@ def make_handler(app):
             return self._send(200, {"ok": True})
 
     return Handler
+
+
+_BG = {}
+_BG_LOCK = threading.Lock()
+
+
+def _background(key, ttl, fn):
+    """Run a slow report in a thread; answer {running: true} until it is ready, then cache it."""
+    now = time.time()
+    with _BG_LOCK:
+        hit = _BG.get(key)
+        if hit and hit.get("result") is not None and now - hit["at"] < ttl:
+            return hit["result"]
+        if hit and hit.get("running"):
+            return {"running": True, "since": hit["started"]}
+        _BG[key] = {"running": True, "started": now, "result": hit.get("result") if hit else None, "at": 0}
+
+    def work():
+        try:
+            res = fn()
+        except Exception as e:  # report the problem instead of spinning forever
+            res = {"ok": False, "reason": f"{type(e).__name__}: {e}"}
+        with _BG_LOCK:
+            _BG[key] = {"running": False, "result": res, "at": time.time(), "started": now}
+    threading.Thread(target=work, daemon=True).start()
+    stale = hit.get("result") if hit else None
+    return stale if stale is not None else {"running": True, "since": now}
+
+
+def _terminal(app, iid):
+    """Everything the trading terminal shows for one item."""
+    E, D = app.engine, app.db
+    m = E.mapping.get(iid)
+    if not m:
+        return {"error": "unknown item"}
+    row = E.by_id.get(iid) or {}
+    view = networth.combined_view(D, E, app.cfg)
+    pos = next((h for h in view["holdings"] if h["id"] == iid), None)
+    slots = []
+    for a in account.accounts(D):
+        for sl in account.slots(D, a["acct"], E.by_id, E.mapping):
+            if sl["item"] == iid and sl["state"] != "EMPTY":
+                slots.append(dict(sl, acctName=a["name"]))
+    fills = [f for f in account.recent_fills(D, None, 400) if f["item"] == iid][:20]
+
+    def stats():
+        series = networth._daily_prices(D, E, [iid], 400)
+        grid, vals = risk._grid(series, 365)
+        v = vals.get(iid)
+        if not v:
+            return {}
+        known = [x for x in v if x]
+        r = risk._rets(v)
+        mret = risk.market_index(D, E, 365)["rets"]
+        cov, vi, vm = risk._cov(r[-180:], [mret.get(t) for t in grid[1:]][-180:])
+        return {"low52": min(known), "high52": max(known), "vol": risk._std(r[-90:]),
+                "beta": cov / vm if cov is not None and vm else None,
+                "corr": cov / math.sqrt(vi * vm) if cov is not None and vi and vm else None,
+                "chg30": (known[-1] / known[-31] - 1) if len(known) > 31 else None,
+                "chg90": (known[-1] / known[-91] - 1) if len(known) > 91 else None,
+                "chg365": (known[-1] / known[0] - 1) if len(known) > 300 else None}
+    return {
+        "meta": m, "row": row, "position": pos, "slots": slots, "fills": fills,
+        "limit": features.buy_limits(D, E.mapping).get(iid),
+        "breakeven": E.tax.breakeven(row.get("low"), iid) if row.get("low") else None,
+        "taxEach": E.tax(row["high"], iid) if row.get("high") else None,
+        "stats": analytics.cached(("tstats", iid), 1800, stats),
+        "news": news.item_news(D, E.mapping, iid, limit=20),
+        "watched": D.one("SELECT 1 AS x FROM watchlist WHERE id=?", (iid,)) is not None,
+    }
 
 
 def _account_status(app):

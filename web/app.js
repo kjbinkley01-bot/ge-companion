@@ -649,6 +649,7 @@ renderers.market = function (host, soft) {
     host.innerHTML = `<h2>Market</h2>
       <p class="lede">How the whole Grand Exchange is moving. Each index starts at 100 and tracks its items' prices weighted by gp traded (no item above 20% of its basket), so you can tell a market wide move from one item's story. Built from your saved hourly history.</p>
       <div class="tiles" id="mkTiles"></div>
+      <div class="chart-card"><div class="chart-head"><span class="title">Market heatmap</span><span class="muted small">The 200 biggest markets by gp traded, grouped by class. Click one to open it in the Terminal.</span></div><div id="mkHeat"></div></div>
       <div class="chart-card">
         <div class="chart-head"><span class="title" id="mkTitle">Index</span>
           <select class="input" id="mkCat" style="width:auto"></select>
@@ -662,6 +663,13 @@ renderers.market = function (host, soft) {
     $$("#mkDays button", host).forEach((b) => (b.onclick = () => { MK.days = +b.dataset.d; store.set("mk", MK); $$("#mkDays button", host).forEach((x) => x.classList.toggle("on", x === b)); loadIndices(host); }));
     $("#mkCat", host).onchange = (e) => { MK.cat = e.target.value; store.set("mk", MK); drawIndexChart(host); };
     loadIndices(host);
+  }
+  if (!soft || !$("#mkHeat svg", host)) {
+    api("/api/heatmap?n=200").then((d) => {
+      const groups = {};
+      d.items.forEach((i) => { (groups[i.category] = groups[i.category] || []).push(Object.assign({}, i, { extra: `Price ${pfmt(i.price)} · 7d ${i.chg7d == null ? "-" : sgnPct(i.chg7d, 1)}` })); });
+      treemap($("#mkHeat", host), Object.entries(groups).map(([name, items]) => ({ name, items })), { height: 420, range: 0.05, valueLabel: "24h gp traded", legend: "Size: 24h gp traded. Color: 24h change.", onPick: (x) => openTerminal(x.id), aria: "Market heatmap" });
+    }).catch(() => {});
   }
   drawMarketTiles(host);
 };
@@ -1105,6 +1113,11 @@ renderers.networth = async function (host, soft) {
       <div id="nwChart"></div>
       <p class="muted small" style="margin:6px 0 0">Solid: your recorded net worth (every 5 minutes while the app runs). Dashed: what today's holdings would have been worth at past prices, for context before tracking began. It is not your real history.</p></div>
     <div class="grid2">
+      <div class="card"><h3 style="margin-top:0">Performance vs the market</h3><div id="nwPerf"><div class="muted small">Loading...</div></div></div>
+      <div class="card"><h3 style="margin-top:0">Risk</h3><div id="nwRisk"><div class="muted small">Loading...</div></div></div>
+    </div>
+    <div class="card" style="margin-top:16px"><h3 style="margin-top:0">Heatmap</h3><div id="nwHeat"></div></div>
+    <div class="grid2">
       <div class="card"><div class="section-head" style="margin-top:0"><h3>Allocation</h3><div class="right"><div class="seg" style="margin:0">${[["category", "By class"], ["container", "By location"], ["item", "Top items"]].map(([k, l]) => `<button data-group="${k}" class="${NW.group === k ? "on" : ""}">${l}</button>`).join("")}</div></div></div>
         <div id="nwAlloc"></div></div>
       <div class="card"><h3 style="margin-top:0">Recommendations</h3><div id="nwRecs"><div class="muted small">Working out what could add value...</div></div></div>
@@ -1129,7 +1142,7 @@ renderers.networth = async function (host, soft) {
     </div>
     <div class="grid2" style="margin-top:16px">
       <div class="card"><h3 style="margin-top:0">What the plugin has seen</h3>
-        <table>${thead([{ label: "Storage" }, ...(NW.acct ? [] : [{ label: "Account" }]), { label: "Last seen" }, { label: "" }], null)}<tbody>${(v.coverage || []).map((c) => `<tr class="static"><td>${esc(c.label)}</td>${NW.acct ? "" : `<td class="muted">${esc(c.acctName || "")}</td>`}<td>${c.ok ? ago(c.age) + " ago" : `<span class="warn-txt">Not yet</span>`}</td><td class="small muted">${!c.ok && c.key === "bank" ? "Open your bank once" : c.ok && c.age > 7 * 86400 && c.key === "bank" ? "Open your bank to refresh" : ""}</td></tr>`).join("") || `<tr class="static"><td colspan="4" class="muted">No accounts yet.</td></tr>`}</tbody></table>
+        <div class="tscroll"><table>${thead([{ label: "Storage" }, ...(NW.acct ? [] : [{ label: "Account" }]), { label: "Last seen" }, { label: "" }], null)}<tbody>${(v.coverage || []).map((c) => `<tr class="static"><td>${esc(c.label)}</td>${NW.acct ? "" : `<td class="muted">${esc(c.acctName || "")}</td>`}<td>${c.ok ? ago(c.age) + " ago" : `<span class="warn-txt">Not yet</span>`}</td><td class="small muted">${!c.ok && c.key === "bank" ? "Open your bank once" : c.ok && c.age > 7 * 86400 && c.key === "bank" ? "Open your bank to refresh" : ""}</td></tr>`).join("") || `<tr class="static"><td colspan="4" class="muted">No accounts yet.</td></tr>`}</tbody></table></div>
         <p class="muted small" style="margin:10px 0 0">Storage the plugin cannot see (POH costume room, STASH units, Tackle box, other accounts without the plugin) can be added by hand in the Portfolio tab; manual additions ${v.manualIncluded ? "are" : "are not"} included in the all accounts total (change in Settings).</p></div>
       <div class="card"><h3 style="margin-top:0">Not counted</h3>${(v.untradeable || []).length ? `<p class="muted small" style="margin-top:0">Untradeable items have no GE price, so they count as 0.</p><div class="mini-list">${v.untradeable.slice(0, 30).map((u) => `<div class="r"><span>${esc(u.name)}</span><span class="v muted">${gp(u.qty)}</span></div>`).join("")}</div>` : `<div class="muted small">Every item held has a GE price.</div>`}
         ${!noPlugin ? `<p class="muted small">Plugin folder: <code>${esc(st.folder)}</code>${st.demo ? " (demo data)" : ""}</p>` : ""}</div>
@@ -1163,11 +1176,15 @@ renderers.networth = async function (host, soft) {
   const hist = (v.history || []).map((h) => ({ t: h.ts, v: h.total }));
   if (hist.length) hist.push({ t: Date.now() / 1000, v: v.total });
   const back = (v.backcast || []).filter((b) => b.ts >= since).map((b) => ({ t: b.ts, v: b.total }));
+  const upRange = hist.length > 1 ? hist[hist.length - 1].v >= hist[0].v : true;
   lineChart($("#nwChart", host), [
-    { name: "Net worth", cls: "l1", color: "var(--series-1)", pts: hist },
+    { name: "Net worth", cls: upRange ? "lpos" : "lneg", color: upRange ? "var(--pos)" : "var(--neg)", pts: hist },
     { name: "Today's holdings", cls: "l2", color: "var(--series-2)", pts: back, dash: true },
   ], { empty: "The chart fills in as the app records your net worth. Import daily history in Settings to see today's holdings at past prices.", aria: "Net worth over time", height: 260, tipFmt: (x) => gp(x) + " gp" });
   // Slower panels load after the page is up.
+  loadPerformance(host, NW.acct, NW.range);
+  loadRisk(host, NW.acct);
+  holdingsHeatmap(host, holdings);
   api("/api/slots").then((d) => {
     const list = d.accounts.filter((a) => !NW.acct || a.acct === NW.acct);
     $("#nwSlots", host).innerHTML = list.length ? list.map((a) => {
@@ -1206,6 +1223,630 @@ function setupCard(st) {
     </ol>
     <p class="small muted">Plugin files are read from <code>${esc(st.folder)}</code>${st.exists ? "" : " (not created yet)"}. Change it if you set a different output folder in the plugin's settings.</p>
     <div class="inline-form"><label class="field wide"><span>Plugin folder</span><input class="input" id="nwFolder" value="${esc(st.folder)}"></label><button class="btn primary" id="nwSetupSave">Save and check</button></div></div>`;
+}
+
+// Trading charts -------------------------------------------------------------------
+// Bars from the Wiki's windows. The Wiki reports average instant-buy and instant-sell
+// prices per window (no open or close), so candles are approximate: the close is the
+// window's mid price, the open is the previous close, and the wicks reach the average
+// instant-buy (high) and instant-sell (low) prices.
+function buildBars(rows, bucket) {
+  const out = [];
+  let cur = null, prevClose = null;
+  for (const r of rows) {
+    const ah = r.avgHighPrice, al = r.avgLowPrice;
+    if (ah == null && al == null) continue;
+    const mid = ah != null && al != null ? (ah + al) / 2 : (ah != null ? ah : al);
+    const bt = Math.floor(r.timestamp / bucket) * bucket;
+    if (!cur || cur.t !== bt) {
+      if (cur) { out.push(cur); prevClose = cur.c; }
+      cur = { t: bt, o: prevClose != null ? prevClose : mid, h: -Infinity, l: Infinity, c: mid, hv: 0, lv: 0, n: 0 };
+    }
+    cur.h = Math.max(cur.h, ah != null ? ah : mid, mid);
+    cur.l = Math.min(cur.l, al != null ? al : mid, mid);
+    cur.c = mid;
+    cur.hv += r.highPriceVolume || 0;
+    cur.lv += r.lowPriceVolume || 0;
+    cur.n++;
+  }
+  if (cur) out.push(cur);
+  for (const b of out) { b.h = Math.max(b.h, b.o, b.c); b.l = Math.min(b.l, b.o, b.c); }
+  return out;
+}
+function smaArr(v, n) { const o = []; let s = 0; v.forEach((x, i) => { s += x; if (i >= n) s -= v[i - n]; o.push(i >= n - 1 ? s / n : null); }); return o; }
+function emaArr(v, n) { const o = [], k = 2 / (n + 1); let e = null; v.forEach((x, i) => { e = e == null ? x : x * k + e * (1 - k); o.push(i >= n - 1 ? e : null); }); return o; }
+function bollArr(v, n = 20, k = 2) {
+  const m = smaArr(v, n);
+  return v.map((_, i) => {
+    if (m[i] == null) return null;
+    let s = 0; for (let j = i - n + 1; j <= i; j++) s += (v[j] - m[i]) ** 2;
+    const sd = Math.sqrt(s / n); return { m: m[i], up: m[i] + k * sd, lo: m[i] - k * sd };
+  });
+}
+function rsiArr(v, n = 14) {
+  const o = new Array(v.length).fill(null); let g = 0, l = 0;
+  for (let i = 1; i < v.length; i++) {
+    const ch = v[i] - v[i - 1], up = Math.max(ch, 0), dn = Math.max(-ch, 0);
+    if (i <= n) { g += up / n; l += dn / n; } else { g = (g * (n - 1) + up) / n; l = (l * (n - 1) + dn) / n; }
+    if (i >= n) o[i] = l === 0 ? 100 : 100 - 100 / (1 + g / l);
+  }
+  return o;
+}
+// Price label precision that suits the price (runes need decimals on averages).
+function pfmt(v) { if (v == null) return "-"; const a = Math.abs(v); return a >= 1e5 ? short(v) : a >= 100 ? gp(v) : a >= 10 ? v.toFixed(1) : v.toFixed(2); }
+
+// bars: [{t,o,h,l,c,hv,lv}]. opts: type ("candle" | "line"), ind (Set of "sma", "ema", "bb",
+// "rsi", "vol", "events"), compare ([{name, color, pts:[{t,v}]}] shown as % change with the
+// item on one axis), lines ([price]), events ([{t, title, kind}]), onPick(price) for drawing.
+function tradingChart(host, bars, opts = {}) {
+  const ind = opts.ind || new Set();
+  if (!bars.length) { host.innerHTML = `<div class="empty">${esc(opts.empty || "No trades saved for this range yet.")}</div>`; return; }
+  const W = Math.max(360, host.clientWidth || 800);
+  const showVol = ind.has("vol"), showRsi = ind.has("rsi");
+  const padL = 8, padR = 64, padT = 22, gap = 8, padB = 22;
+  const H1 = opts.height || 340, H2 = showVol ? 72 : 0, H3 = showRsi ? 72 : 0;
+  const H = padT + H1 + (H2 ? gap + H2 : 0) + (H3 ? gap + H3 : 0) + padB;
+  const n = bars.length, plotW = W - padL - padR, slot = plotW / n;
+  const xi = (i) => padL + slot * (i + 0.5);
+  const closes = bars.map((b) => b.c);
+  const cmp = (opts.compare || []).filter((s) => s.pts && s.pts.length > 1);
+  const pctMode = cmp.length > 0;
+  // In compare mode everything is % change from the first bar, on one axis.
+  const base = closes[0];
+  const conv = (v) => (pctMode ? v / base - 1 : v);
+  const cmpSeries = cmp.map((s) => {
+    const b0 = s.pts.find((p) => p.t >= bars[0].t) || s.pts[0];
+    return Object.assign({}, s, { vals: bars.map((b) => { let best = null; for (const p of s.pts) { if (p.t <= b.t + 1) best = p; else break; } return best ? best.v / b0.v - 1 : null; }) });
+  });
+  const sma = ind.has("sma") ? smaArr(closes, 20) : null, ema = ind.has("ema") ? emaArr(closes, 50) : null;
+  const bb = ind.has("bb") ? bollArr(closes) : null, rsi = showRsi ? rsiArr(closes) : null;
+  let lo = Infinity, hi = -Infinity;
+  const see = (v) => { if (v != null && isFinite(v)) { lo = Math.min(lo, v); hi = Math.max(hi, v); } };
+  bars.forEach((b, i) => {
+    if (pctMode) see(conv(b.c)); else { see(b.l); see(b.h); }
+    if (!pctMode && bb && bb[i]) { see(bb[i].up); see(bb[i].lo); }
+  });
+  cmpSeries.forEach((s) => s.vals.forEach(see));
+  if (!pctMode) (opts.lines || []).forEach((p) => { if (p > lo * 0.8 && p < hi * 1.2) see(p); });
+  const padY = (hi - lo) * 0.06 || Math.abs(hi) * 0.02 || 1; lo -= padY; hi += padY;
+  const ticks = niceTicks(lo, hi, 5); lo = ticks[0]; hi = ticks[ticks.length - 1];
+  const y = (v) => padT + H1 * (1 - (v - lo) / (hi - lo || 1));
+  const yfmt = pctMode ? (v) => (v > 0 ? "+" : "") + pct(v, Math.abs(hi - lo) < 0.1 ? 1 : 0) : pfmt;
+  const volTop = padT + H1 + gap, volBot = volTop + H2;
+  const vmax = Math.max(1, ...bars.map((b) => b.hv + b.lv));
+  const rsiTop = (H2 ? volBot : padT + H1) + gap, rsiBot = rsiTop + H3;
+  const ry = (v) => rsiTop + H3 * (1 - v / 100);
+  const bw = Math.max(1, Math.min(14, slot * 0.7));
+  const line = (vals, f = (v) => v) => { let d = "", pen = false; vals.forEach((v, i) => { if (v == null) { pen = false; return; } d += (pen ? "L" : "M") + xi(i).toFixed(1) + "," + y(f(v)).toFixed(1); pen = true; }); return d; };
+  let body = "";
+  if (!pctMode && bb) {
+    const up = [], dn = [];
+    bb.forEach((b, i) => { if (b) { up.push([xi(i), y(b.up)]); dn.push([xi(i), y(b.lo)]); } });
+    if (up.length > 1) body += `<path class="bb-band" d="M${up.map((p) => p.join(",")).join("L")}L${dn.reverse().map((p) => p.join(",")).join("L")}Z"/>`;
+  }
+  if (pctMode || opts.type === "line") {
+    const upDay = closes[closes.length - 1] >= closes[0];
+    body += `<path class="price-line ${upDay ? "up" : "down"}" d="${line(closes, conv)}"/>`;
+  } else {
+    body += bars.map((b, i) => {
+      const up = b.c >= b.o, x = xi(i), yo = y(b.o), yc = y(b.c), top = Math.min(yo, yc), h = Math.max(1, Math.abs(yc - yo));
+      // Up candles are hollow and down candles filled, so direction never relies on color alone.
+      return `<line class="wick ${up ? "up" : "down"}" x1="${x}" x2="${x}" y1="${y(b.h)}" y2="${y(b.l)}"/><rect class="candle ${up ? "up" : "down"}" x="${(x - bw / 2).toFixed(1)}" y="${top.toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}"/>`;
+    }).join("");
+  }
+  if (!pctMode && sma) body += `<path class="ov ov1" d="${line(sma)}"/>`;
+  if (!pctMode && ema) body += `<path class="ov ov2" d="${line(ema)}"/>`;
+  cmpSeries.forEach((s, k) => { body += `<path class="cmp" style="stroke:${s.color}" d="${line(s.vals)}"${k ? ` stroke-dasharray="5 4"` : ""}/>`; });
+  if (pctMode) body += `<line class="base" x1="${padL}" x2="${W - padR}" y1="${y(0)}" y2="${y(0)}"/>`;
+  if (!pctMode) (opts.lines || []).forEach((p, k) => { if (p >= lo && p <= hi) body += `<line class="pline" x1="${padL}" x2="${W - padR}" y1="${y(p)}" y2="${y(p)}"/><rect class="pl-tag" x="${W - padR + 2}" y="${y(p) - 8}" width="${padR - 4}" height="16" rx="3"/><text class="pl-txt" x="${W - padR + 6}" y="${y(p) + 4}">${pfmt(p)}</text>`; });
+  // Last price marker on the axis.
+  const lastV = conv(closes[n - 1]);
+  const lastUp = closes[n - 1] >= (n > 1 ? closes[n - 2] : closes[0]);
+  body += `<line class="last-line" x1="${padL}" x2="${W - padR}" y1="${y(lastV)}" y2="${y(lastV)}"/><rect class="last-tag ${lastUp ? "up" : "down"}" x="${W - padR + 2}" y="${y(lastV) - 8}" width="${padR - 4}" height="16" rx="3"/><text class="last-txt" x="${W - padR + 6}" y="${y(lastV) + 4}">${esc(yfmt(lastV))}</text>`;
+  // Volume: instant buys and instant sells side by side in each slot.
+  let vol = "";
+  if (H2) {
+    const half = Math.max(1, bw / 2 - 0.5);
+    vol = bars.map((b, i) => {
+      const x = xi(i), hb = (b.hv / vmax) * H2, hs = (b.lv / vmax) * H2;
+      return `${hb ? `<rect class="vb up" x="${(x - half - 0.5).toFixed(1)}" y="${(volBot - hb).toFixed(1)}" width="${half.toFixed(1)}" height="${hb.toFixed(1)}"/>` : ""}${hs ? `<rect class="vb down" x="${(x + 0.5).toFixed(1)}" y="${(volBot - hs).toFixed(1)}" width="${half.toFixed(1)}" height="${hs.toFixed(1)}"/>` : ""}`;
+    }).join("") + `<line class="axis" x1="${padL}" x2="${W - padR}" y1="${volBot}" y2="${volBot}"/><text x="${W - padR + 6}" y="${volTop + 10}">${short(vmax)}</text><text class="pane-lbl" x="${padL + 4}" y="${volTop + 10}">Volume: instant buys | instant sells</text>`;
+  }
+  let rsiSvg = "";
+  if (H3) {
+    rsiSvg = `<rect class="rsi-zone" x="${padL}" y="${ry(70)}" width="${plotW}" height="${ry(30) - ry(70)}"/>
+      <line class="grid" x1="${padL}" x2="${W - padR}" y1="${ry(70)}" y2="${ry(70)}"/><line class="grid" x1="${padL}" x2="${W - padR}" y1="${ry(30)}" y2="${ry(30)}"/>
+      <text x="${W - padR + 6}" y="${ry(70) + 4}">70</text><text x="${W - padR + 6}" y="${ry(30) + 4}">30</text>
+      <path class="ov ov3" d="${rsi.map((v, i) => v == null ? "" : (i && rsi[i - 1] != null ? "L" : "M") + xi(i).toFixed(1) + "," + ry(v).toFixed(1)).join("")}"/>
+      <text class="pane-lbl" x="${padL + 4}" y="${rsiTop + 10}">RSI 14</text>`;
+  }
+  // News flags along the bottom of the price pane.
+  let flags = "";
+  if (ind.has("events")) {
+    (opts.events || []).forEach((ev) => {
+      if (ev.t < bars[0].t || ev.t > bars[n - 1].t + 86400) return;
+      let i = 0; while (i < n - 1 && bars[i + 1].t <= ev.t) i++;
+      const x = xi(i);
+      flags += `<g class="flag ${ev.upcoming ? "up" : ""}" data-ev="${esc(ev.title)}" data-t="${ev.t}" data-k="${esc(ev.kind || "")}"><line x1="${x}" x2="${x}" y1="${padT}" y2="${padT + H1}"/><circle cx="${x}" cy="${padT + H1 - 7}" r="6"/><text x="${x}" y="${padT + H1 - 4}" text-anchor="middle">${ev.upcoming ? "A" : "U"}</text></g>`;
+    });
+  }
+  const span = bars[n - 1].t - bars[0].t, nx = Math.max(2, Math.min(7, Math.floor(plotW / 110)));
+  const xt = []; for (let k = 0; k <= nx; k++) xt.push(Math.round((n - 1) * k / nx));
+  const legend = [];
+  if (pctMode) { legend.push([`var(--pos)`, opts.name || "This item"]); cmpSeries.forEach((s) => legend.push([s.color, s.name])); }
+  else { if (sma) legend.push(["var(--series-2)", "SMA 20"]); if (ema) legend.push(["var(--series-3)", "EMA 50"]); if (bb) legend.push(["var(--muted)", "Bollinger 20, 2"]); }
+  host.innerHTML = `<div class="tc-read" aria-live="off"></div>${legend.length ? `<div class="legend-inline tc-legend">${legend.map(([c, l]) => `<span><i style="background:${c}"></i>${esc(l)}</span>`).join("")}</div>` : ""}
+    <svg class="chart tchart" viewBox="0 0 ${W} ${H}" height="${H}" role="img" aria-label="${esc(opts.aria || "Price chart")}">
+    ${ticks.map((t) => `<line class="grid" x1="${padL}" x2="${W - padR}" y1="${y(t)}" y2="${y(t)}"/><text x="${W - padR + 6}" y="${y(t) + 4}">${esc(yfmt(t))}</text>`).join("")}
+    ${body}${flags}${vol}${rsiSvg}
+    ${xt.map((i, k) => `<text x="${xi(i)}" y="${H - 5}" text-anchor="${k === 0 ? "start" : k === nx ? "end" : "middle"}">${axisTime(bars[i].t, span)}</text>`).join("")}
+    <g class="hover" visibility="hidden"><line class="xhair" y1="${padT}" y2="${H - padB}"/><line class="yhair" x1="${padL}" x2="${W - padR}"/><rect class="yh-tag" x="${W - padR + 2}" width="${padR - 4}" height="16" rx="3"/><text class="yh-txt" x="${W - padR + 6}"></text></g>
+    <rect x="${padL}" y="${padT}" width="${plotW}" height="${H - padT - padB}" fill="transparent" class="hit ${opts.drawing ? "drawing" : ""}"/>
+  </svg>`;
+  const svg = $("svg", host), g = $(".hover", svg), read = $(".tc-read", host);
+  const readout = (i) => {
+    const b = bars[i];
+    const chg = b.c / b.o - 1;
+    let s = `<span class="muted">${esc(fmtTime(b.t, true))}</span>`;
+    if (pctMode) s += ` <b>${esc(opts.name || "Item")}</b> <span class="${signCls(conv(b.c))}">${yfmt(conv(b.c))}</span>` + cmpSeries.map((c) => ` <b>${esc(c.name)}</b> <span class="${signCls(c.vals[i])}">${c.vals[i] == null ? "-" : yfmt(c.vals[i])}</span>`).join("");
+    else s += ` O <b>${pfmt(b.o)}</b> H <b>${pfmt(b.h)}</b> L <b>${pfmt(b.l)}</b> C <b>${pfmt(b.c)}</b> <span class="${signCls(chg)}">${chg > 0 ? "+" : ""}${pct(chg, 2)}</span>`;
+    s += ` <span class="muted">Buys</span> ${short(b.hv)} <span class="muted">Sells</span> ${short(b.lv)}`;
+    if (sma && sma[i] != null && !pctMode) s += ` <span class="muted">SMA</span> ${pfmt(sma[i])}`;
+    if (ema && ema[i] != null && !pctMode) s += ` <span class="muted">EMA</span> ${pfmt(ema[i])}`;
+    if (rsi && rsi[i] != null) s += ` <span class="muted">RSI</span> ${rsi[i].toFixed(0)}`;
+    read.innerHTML = s;
+  };
+  readout(n - 1);
+  const hit = $(".hit", svg);
+  const pos = (e) => { const r = svg.getBoundingClientRect(); return [((e.clientX - r.left) / r.width) * W, ((e.clientY - r.top) / r.height) * H]; };
+  hit.addEventListener("mousemove", (e) => {
+    const [mx, my] = pos(e);
+    const i = Math.max(0, Math.min(n - 1, Math.floor((mx - padL) / slot)));
+    g.setAttribute("visibility", "visible");
+    $(".xhair", g).setAttribute("x1", xi(i)); $(".xhair", g).setAttribute("x2", xi(i));
+    const inPrice = my >= padT && my <= padT + H1;
+    $(".yhair", g).style.display = $(".yh-tag", g).style.display = $(".yh-txt", g).style.display = inPrice ? "" : "none";
+    if (inPrice) {
+      $(".yhair", g).setAttribute("y1", my); $(".yhair", g).setAttribute("y2", my);
+      $(".yh-tag", g).setAttribute("y", my - 8); $(".yh-txt", g).setAttribute("y", my + 4);
+      $(".yh-txt", g).textContent = yfmt(lo + (hi - lo) * (1 - (my - padT) / H1));
+    }
+    readout(i);
+  });
+  hit.addEventListener("mouseleave", () => { g.setAttribute("visibility", "hidden"); readout(n - 1); });
+  hit.addEventListener("click", (e) => {
+    if (!opts.drawing || !opts.onPick || pctMode) return;
+    const [, my] = pos(e);
+    if (my < padT || my > padT + H1) return;
+    opts.onPick(Math.round(lo + (hi - lo) * (1 - (my - padT) / H1)));
+  });
+  const tip = $("#tooltip");
+  $$(".flag", svg).forEach((f) => {
+    f.addEventListener("mousemove", (e) => tipAt(e, `<div class="muted">${esc(fmtTime(+f.dataset.t, true))} · ${esc(f.dataset.k)}</div><b>${esc(f.dataset.ev)}</b>`));
+    f.addEventListener("mouseleave", () => (tip.hidden = true));
+    f.addEventListener("click", () => opts.onEvent && opts.onEvent(f.dataset.ev));
+  });
+}
+
+// Treemap heatmap (squarified). groups: [{name, items: [{id, name, value, chg}]}]. Size is
+// value, color is the day's move on a diverging scale (down, neutral gray, up) clipped at
+// +/- `range`; every tile big enough carries its signed % so color is never the only cue.
+function cssVar(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+function hexRgb(h) { h = h.replace("#", ""); if (h.length === 3) h = h.split("").map((c) => c + c).join(""); const n = parseInt(h, 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; }
+function mixColor(a, b, t) { const x = hexRgb(a), y = hexRgb(b); return `rgb(${x.map((v, i) => Math.round(v + (y[i] - v) * t)).join(",")})`; }
+function divColor(v, range) {
+  const mid = cssVar("--div-mid"), pos = cssVar("--div-pos"), neg = cssVar("--div-neg");
+  if (v == null) return mixColor(mid, mid, 0);
+  const t = Math.max(-1, Math.min(1, v / range));
+  return t >= 0 ? mixColor(mid, pos, t ** 0.75) : mixColor(mid, neg, (-t) ** 0.75);
+}
+function inkFor(rgb) { const [r, g, b] = rgb.match(/\d+/g).map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }); return 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.3 ? "#0b0c0e" : "#ffffff"; }
+function squarify(items, x, y, w, h) {
+  const out = [], total = items.reduce((s, d) => s + d.value, 0);
+  if (!total || w <= 0 || h <= 0) return out;
+  const scale = (w * h) / total;
+  let rest = items.map((d) => Object.assign({}, d, { area: d.value * scale }));
+  const worst = (row, side) => { const s = row.reduce((a, d) => a + d.area, 0), mx = Math.max(...row.map((d) => d.area)), mn = Math.min(...row.map((d) => d.area)); return Math.max((side * side * mx) / (s * s), (s * s) / (side * side * mn)); };
+  while (rest.length) {
+    const side = Math.min(w, h);
+    let row = [rest[0]], i = 1;
+    while (i < rest.length && worst(row.concat(rest[i]), side) <= worst(row, side)) { row.push(rest[i]); i++; }
+    rest = rest.slice(i);
+    const s = row.reduce((a, d) => a + d.area, 0);
+    if (w >= h) { const cw = s / h; let cy = y; row.forEach((d) => { const ch = d.area / cw; out.push(Object.assign(d, { x, y: cy, w: cw, h: ch })); cy += ch; }); x += cw; w -= cw; }
+    else { const ch = s / w; let cx = x; row.forEach((d) => { const cw = d.area / ch; out.push(Object.assign(d, { x: cx, y, w: cw, h: ch })); cx += cw; }); y += ch; h -= ch; }
+  }
+  return out;
+}
+function treemap(host, groups, opts = {}) {
+  const W = Math.max(320, host.clientWidth || 800), H = opts.height || 380, range = opts.range || 0.05;
+  groups = groups.map((g) => Object.assign({}, g, { value: g.items.reduce((s, d) => s + d.value, 0), items: g.items.filter((d) => d.value > 0).sort((a, b) => b.value - a.value) })).filter((g) => g.value > 0).sort((a, b) => b.value - a.value);
+  if (!groups.length) { host.innerHTML = `<div class="empty">${esc(opts.empty || "Nothing to show yet.")}</div>`; return; }
+  const cells = [];
+  squarify(groups, 0, 0, W, H).forEach((g) => {
+    const head = g.h > 34 && g.w > 60 ? 16 : 0;
+    squarify(g.items, g.x + 1, g.y + head + 1, g.w - 2, g.h - head - 2).forEach((d) => cells.push(d));
+    g.head = head;
+  });
+  const gl = squarify(groups, 0, 0, W, H);
+  const txt = (d) => {
+    if (d.w < 44 || d.h < 26) return "";
+    const fs = Math.max(10, Math.min(15, Math.sqrt(d.w * d.h) / 9));
+    const nm = d.name.length * fs * 0.55 > d.w - 8 ? d.name.slice(0, Math.max(3, Math.floor((d.w - 8) / (fs * 0.55)))) + "." : d.name;
+    return `<text class="tm-name" x="${d.x + 5}" y="${d.y + fs + 3}" style="font-size:${fs}px">${esc(nm)}</text>${d.h > fs * 2 + 10 ? `<text class="tm-chg" x="${d.x + 5}" y="${d.y + fs * 2 + 6}" style="font-size:${fs - 1}px">${d.chg == null ? "" : (d.chg > 0 ? "+" : "") + pct(d.chg, 1)}</text>` : ""}`;
+  };
+  host.innerHTML = `<svg class="chart treemap" viewBox="0 0 ${W} ${H}" height="${H}" role="img" aria-label="${esc(opts.aria || "Heatmap")}">
+    ${gl.map((g) => `<rect class="tm-group" x="${g.x}" y="${g.y}" width="${g.w}" height="${g.h}"/>${g.h > 34 && g.w > 60 ? `<text class="tm-gname" x="${g.x + 5}" y="${g.y + 12}">${esc(g.name.toUpperCase())}</text>` : ""}`).join("")}
+    ${cells.map((d, i) => { const fill = divColor(d.chg, range); return `<g class="tm-cell" data-i="${i}" style="--ink:${inkFor(fill)}"><rect x="${d.x + 1}" y="${d.y + 1}" width="${Math.max(0, d.w - 2)}" height="${Math.max(0, d.h - 2)}" rx="2" style="fill:${fill}"/>${txt(d)}</g>`; }).join("")}
+  </svg>
+  <div class="heat-legend"><span>${"-" + pct(range, 0)}</span><span class="ramp div"></span><span>${"+" + pct(range, 0)}</span><span class="muted">${esc(opts.legend || "Size: value. Color: 24h change.")}</span></div>`;
+  $$(".tm-cell", host).forEach((el) => {
+    const d = cells[+el.dataset.i];
+    el.addEventListener("mousemove", (e) => tipAt(e, `<b>${esc(d.name)}</b><div class="r"><span class="muted">${esc(opts.valueLabel || "Value")}</span><b>${short(d.value)}</b></div><div class="r"><span class="muted">24h</span><b class="${signCls(d.chg)}">${d.chg == null ? "-" : (d.chg > 0 ? "+" : "") + pct(d.chg, 2)}</b></div>${d.extra ? `<div class="muted">${esc(d.extra)}</div>` : ""}`));
+    el.addEventListener("mouseleave", () => ($("#tooltip").hidden = true));
+    el.addEventListener("click", () => opts.onPick && opts.onPick(d));
+  });
+}
+
+// Terminal: a trading desk where every panel follows one item ----------------------
+const TM = Object.assign({ id: 4151, tf: "1M", type: "candle", ind: ["vol", "events", "sma"], cmp: "none", cmpId: null, layout: "trade", list: "watch", bottom: "news" }, store.get("tm", {}));
+TM.drawing = false;
+const TF = {
+  "1D": { res: "5m", days: 1, bucket: 900 }, "1W": { res: "1h", days: 7, bucket: 3600 },
+  "1M": { res: "1h", days: 30, bucket: 14400 }, "3M": { res: "1d", days: 90, bucket: 86400 },
+  "1Y": { res: "1d", days: 365, bucket: 86400 }, "2Y": { res: "1d", days: 800, bucket: 3 * 86400 },
+};
+const IND = [["sma", "SMA 20"], ["ema", "EMA 50"], ["bb", "Bollinger"], ["rsi", "RSI"], ["vol", "Volume"], ["events", "News flags"]];
+let TM_DATA = null, TM_REPORT = null, TM_REQ = 0;
+function saveTM() { const c = Object.assign({}, TM); delete c.drawing; store.set("tm", c); }
+function tmLines(id) { return store.get("tm.lines." + id, []); }
+function openTerminal(id) { TM.id = id; saveTM(); closeItem(); showTab("terminal"); }
+
+async function tmHistory(id, tf) {
+  const f = TF[tf];
+  let d = await api(`/api/localhistory?id=${id}&res=${f.res}&days=${f.days}`);
+  if (f.res === "1d" && d.data.length < 10) d = await api(`/api/localhistory?id=${id}&res=1h&days=${f.days}`);  // no daily import yet
+  return buildBars(d.data, f.bucket);
+}
+async function tmCompare(tf) {
+  const f = TF[tf];
+  if (TM.cmp === "market") {
+    if (f.days <= 30) {
+      const d = await api(`/api/indices?days=${Math.max(1, Math.ceil(f.days))}`);
+      const mk = (d.categories || []).find((c) => c.key === "market");
+      return mk ? [{ name: "Market index", color: "var(--series-2)", pts: mk.series }] : [];
+    }
+    const d = await api(`/api/marketindex?days=${f.days}`);
+    return [{ name: "Market index", color: "var(--series-2)", pts: d.series }];
+  }
+  if (TM.cmp === "item" && TM.cmpId) {
+    const bars = await tmHistory(TM.cmpId, tf);
+    const nm = (S.byId.get(TM.cmpId) || {}).name || "Item " + TM.cmpId;
+    return [{ name: nm, color: "var(--series-3)", pts: bars.map((b) => ({ t: b.t, v: b.c })) }];
+  }
+  return [];
+}
+
+function tmListRows() {
+  const liquid = S.rows.filter((r) => r.high && (r.vol24 || 0) > 500);
+  if (TM.list === "watch") return [...S.watch].map((id) => S.byId.get(id)).filter(Boolean);
+  if (TM.list === "hold") return (TM_DATA && TM_DATA.holdIds ? TM_DATA.holdIds : []).map((id) => S.byId.get(id)).filter(Boolean);
+  if (TM.list === "gain") return liquid.filter((r) => r.chg24h != null && (r.vol24 || 0) > 2000).sort((a, b) => b.chg24h - a.chg24h).slice(0, 40);
+  if (TM.list === "lose") return liquid.filter((r) => r.chg24h != null && (r.vol24 || 0) > 2000).sort((a, b) => a.chg24h - b.chg24h).slice(0, 40);
+  return liquid.sort((a, b) => b.vol24 * b.high - a.vol24 * a.high).slice(0, 60);
+}
+function drawTmList(host) {
+  const rows = tmListRows();
+  $("#tmList", host).innerHTML = rows.length ? rows.map((r) => `<div class="tm-row ${r.id === TM.id ? "on" : ""}" data-id="${r.id}" tabindex="-1">
+      <img alt="" src="${esc(iconUrl(r.icon))}" onerror="this.style.visibility='hidden'"><span class="nm">${esc(r.name)}</span>
+      <span class="px">${pfmt(r.high)}</span><span class="ch ${signCls(r.chg24h)}">${r.chg24h == null ? "-" : (r.chg24h > 0 ? "+" : "") + pct(r.chg24h, 1)}</span></div>`).join("")
+    : `<div class="empty small">${TM.list === "watch" ? "Star items to build a watchlist." : TM.list === "hold" ? "No holdings yet." : "Nothing here."}</div>`;
+  $$(".tm-row", host).forEach((el) => (el.onclick = () => tmSelect(host, +el.dataset.id)));
+}
+function tmSelect(host, id) { TM.id = id; saveTM(); renderers.terminal(host, false); }
+
+function tmSignalsNow(bars) {
+  // Signals on the daily bars right now, named the same way as the indicator report.
+  const c = bars.map((b) => b.c), n = c.length, out = [];
+  if (n < 60) return out;
+  const r = rsiArr(c), s20 = smaArr(c, 20), s50 = smaArr(c, 50), bb = bollArr(c);
+  if (r[n - 1] < 30) out.push(["rsi_low", `RSI ${r[n - 1].toFixed(0)}: oversold`]);
+  if (r[n - 1] > 70) out.push(["rsi_high", `RSI ${r[n - 1].toFixed(0)}: overbought`]);
+  for (let i = Math.max(51, n - 5); i < n; i++) {
+    if (s20[i - 1] <= s50[i - 1] && s20[i] > s50[i]) out.push(["golden", "20 day average crossed above the 50 day"]);
+    if (s20[i - 1] >= s50[i - 1] && s20[i] < s50[i]) out.push(["death", "20 day average crossed below the 50 day"]);
+  }
+  if (bb[n - 1] && c[n - 1] < bb[n - 1].lo) out.push(["bb_low", "Below the lower Bollinger band"]);
+  if (bb[n - 1] && c[n - 1] > bb[n - 1].up) out.push(["bb_high", "Above the upper Bollinger band"]);
+  if (n > 91) { const w = c.slice(n - 91, n - 1); if (c[n - 1] > Math.max(...w)) out.push(["high90", "New 90 day high"]); if (c[n - 1] < Math.min(...w)) out.push(["low90", "New 90 day low"]); }
+  return out;
+}
+const VERDICT_CLS = { "worked in both halves": "pos", "worked in reverse": "neg", "only in one half": "warn-txt", "no edge": "muted", "too few": "muted" };
+
+renderers.terminal = async function (host, soft) {
+  const req = ++TM_REQ;
+  if (!soft || !$(".tm", host)) {
+    host.innerHTML = `<div class="tm layout-${TM.layout}">
+      <div class="tm-bar">
+        <div class="search-wrap tm-search">${pickerField("", "tmFind", "field tm-find")}</div>
+        <div class="tm-head" id="tmHead"></div>
+        <div class="right">
+          <div class="seg" id="tmLayout" title="Layout (L)">${[["trade", "Trade"], ["chart", "Chart"], ["research", "Research"]].map(([k, l]) => `<button data-k="${k}" class="${TM.layout === k ? "on" : ""}">${l}</button>`).join("")}</div>
+        </div>
+      </div>
+      <div class="tm-grid">
+        <aside class="tm-left panel"><div class="seg tm-tabs" id="tmListTabs">${[["watch", "Watch"], ["hold", "Held"], ["gain", "Gainers"], ["lose", "Losers"], ["top", "Top"]].map(([k, l]) => `<button data-k="${k}" class="${TM.list === k ? "on" : ""}">${l}</button>`).join("")}</div><div id="tmList" class="tm-list"></div></aside>
+        <section class="tm-center panel">
+          <div class="tm-tools">
+            <div class="seg" id="tmTf">${Object.keys(TF).map((k, i) => `<button data-k="${k}" class="${TM.tf === k ? "on" : ""}" title="Key ${i + 1}">${k}</button>`).join("")}</div>
+            <div class="seg" id="tmType">${[["candle", "Candles"], ["line", "Line"]].map(([k, l]) => `<button data-k="${k}" class="${TM.type === k ? "on" : ""}">${l}</button>`).join("")}</div>
+            <div class="chips tm-ind" id="tmInd">${IND.map(([k, l]) => `<button class="chip ${TM.ind.includes(k) ? "on" : ""}" data-k="${k}">${l}</button>`).join("")}</div>
+            <label class="tm-cmp">Compare <select class="input" id="tmCmp"><option value="none">None</option><option value="market" ${TM.cmp === "market" ? "selected" : ""}>Market index</option><option value="item" ${TM.cmp === "item" ? "selected" : ""}>${TM.cmp === "item" && TM.cmpId ? esc((S.byId.get(TM.cmpId) || {}).name || "Item") : "Another item..."}</option></select></label>
+            <button class="btn small ${TM.drawing ? "primary" : ""}" id="tmDraw" title="Click the chart to add a price line (D)">Price line</button>
+            <button class="btn small" id="tmClear" title="Remove this item's price lines">Clear lines</button>
+          </div>
+          <div id="tmCmpPick" hidden>${pickerField("Compare with", "tmCmpItem", "field")}</div>
+          <div id="tmChart" class="tm-chart"></div>
+          <div class="muted small tm-note">Candles are built from the Wiki's average prices per window: the close is the mid price and the wicks reach the average instant-buy and instant-sell prices. Hollow candles closed up, filled closed down.</div>
+        </section>
+        <aside class="tm-right panel" id="tmRight"></aside>
+        <section class="tm-bottom panel">
+          <div class="seg tm-tabs" id="tmBottomTabs">${[["news", "News and events"], ["signals", "Signals"], ["trades", "Your trades"]].map(([k, l]) => `<button data-k="${k}" class="${TM.bottom === k ? "on" : ""}">${l}</button>`).join("")}</div>
+          <div id="tmBottom"></div>
+        </section>
+      </div>
+      <div class="muted small tm-keys">Keys: / search · J and K move through the list · 1 to 6 timeframe · C candles or line · D price line · W watch · L layout</div>
+    </div>`;
+    bindTerminal(host);
+  }
+  drawTmList(host);
+  let d, bars, cmp;
+  try {
+    [d, bars, cmp] = await Promise.all([api("/api/terminal?id=" + TM.id), tmHistory(TM.id, TM.tf), tmCompare(TM.tf)]);
+  } catch (e) { $("#tmChart", host).innerHTML = `<div class="notice">${esc(e.message)}</div>`; return; }
+  if (req !== TM_REQ) return;  // a newer selection is loading
+  if (!TM_DATA || !TM_DATA.holdIds) {
+    api("/api/networth").then((v) => { TM_DATA = Object.assign(TM_DATA || {}, { holdIds: v.holdings.filter((h) => h.how !== "cash").map((h) => h.id) }); if (TM.list === "hold") drawTmList(host); }).catch(() => {});
+  }
+  TM_DATA = Object.assign(TM_DATA || {}, { d, bars });
+  const m = d.meta, r = d.row || {}, st = d.stats || {};
+  const dayChg = r.chg24h;
+  $("#tmHead", host).innerHTML = `<img alt="" src="${esc(iconUrl(m.icon))}" onerror="this.style.visibility='hidden'">
+    <div><div class="tm-name">${esc(m.name)} ${star(m.id)}</div><div class="muted small">${m.members ? "Members" : "Free to play"} · limit ${gp(m.limit)} · ID ${m.id}</div></div>
+    <div class="tm-price"><span class="big">${pfmt(r.high)}</span> <span class="${signCls(dayChg)}">${dayChg == null ? "" : (dayChg > 0 ? "+" : "") + pct(dayChg, 2) + " today"}</span></div>`;
+  bindRowClicks($("#tmHead", host));
+  const drawChart = () => tradingChart($("#tmChart", host), bars, {
+    type: TM.type, ind: new Set(TM.ind), compare: cmp, name: m.name, lines: tmLines(TM.id), drawing: TM.drawing,
+    height: TM.layout === "chart" ? 460 : 360,
+    events: (d.news || []).map((n) => ({ t: n.t, title: n.title, kind: n.kindLabel, upcoming: n.upcoming })),
+    onPick: (p) => { const l = tmLines(TM.id); l.push(p); store.set("tm.lines." + TM.id, l); TM.drawing = false; $("#tmDraw", host).classList.remove("primary"); drawChart(); },
+    onEvent: () => { TM.bottom = "news"; saveTM(); drawTmBottom(host); },
+    aria: `${m.name} price chart`,
+  });
+  drawChart();
+  TM_DATA.redraw = drawChart;
+  drawTmRight(host, d);
+  drawTmBottom(host);
+};
+
+function drawTmRight(host, d) {
+  const m = d.meta, r = d.row || {}, p = d.position, st = d.stats || {};
+  const spread = r.high && r.low ? r.high - r.low : null;
+  const rangePos = st.low52 && st.high52 && r.high ? (r.high - st.low52) / Math.max(1, st.high52 - st.low52) : null;
+  $("#tmRight", host).innerHTML = `
+    <div class="q-grid">
+      <div class="q"><div class="k">Instant buy</div><div class="v">${pfmt(r.high)}</div><div class="s muted">sell here</div></div>
+      <div class="q"><div class="k">Instant sell</div><div class="v">${pfmt(r.low)}</div><div class="s muted">buy here</div></div>
+    </div>
+    <div class="kv small">
+      <span class="k">Spread</span><span>${spread == null ? "-" : pfmt(spread)} <span class="muted">${r.low ? pct(spread / r.low, 2) : ""}</span></span>
+      <span class="k">Tax on a sale</span><span>${d.taxEach == null ? "-" : gp(d.taxEach)}</span>
+      <span class="k">Flip profit each</span><span class="${signCls(r.profit)}">${r.profit == null ? "-" : signed(r.profit)} <span class="muted">${pct(r.roi, 2)}</span></span>
+      <span class="k">Break-even sell</span><span>${gp(d.breakeven)}</span>
+      <span class="k">Suggested offers</span><span>buy ${pfmt(r.low ? r.low + 1 : null)} · sell ${pfmt(r.high ? r.high - 1 : null)}</span>
+      <span class="k">Your limit left</span><span>${d.limit ? gp(d.limit.left) + ` <span class="muted">resets ${ago(d.limit.resetAt - Date.now() / 1000)}</span>` : gp(m.limit)}</span>
+      <span class="k">Fill time</span><span>${r.fillHrs != null ? (r.fillHrs < 10 ? r.fillHrs.toFixed(1) : Math.round(r.fillHrs)) + "h for a limit" : "-"}</span>
+      <span class="k">Margin held</span><span>${r.stability != null ? pct(r.stability, 0) + " of recent windows" : "-"}</span>
+    </div>
+    <h4>Your position</h4>
+    ${p ? `<div class="kv small">
+      <span class="k">Held</span><span><b>${gp(p.qty)}</b> <span class="muted">${esc(Object.keys(p.where).join(", "))}</span></span>
+      <span class="k">Value</span><span><b>${short(p.value)}</b> <span class="muted">${pct(p.share, 1)} of net worth</span></span>
+      <span class="k">Avg cost</span><span>${p.costEach == null ? "-" : gp(p.costEach) + (p.costFrom && p.costFrom !== "trades" ? `<span class="muted" title="Value when first seen">*</span>` : "")}</span>
+      <span class="k">Unrealized</span><span class="${signCls(p.pnl)}">${p.pnl == null ? "-" : signed(p.pnl, short)}</span>
+      <span class="k">Today</span><span class="${signCls(p.chg24gp)}">${p.chg24gp ? signed(p.chg24gp, short) : "-"}</span></div>` : `<div class="muted small">You don't hold any.</div>`}
+    ${d.slots.length ? `<h4>Your GE offers</h4>${d.slots.map((s) => `<div class="small tm-slot"><span class="tag ${s.side === "buy" ? "free" : "pump"}">${s.side}</span> ${gp(s.done)} / ${gp(s.total)} at ${pfmt(s.price)} <div class="progress"><i style="width:${Math.round(s.progress * 100)}%"></i></div>${s.note ? `<div class="warn-txt">${esc(s.note)}</div>` : ""}</div>`).join("")}` : ""}
+    <h4>Key stats</h4>
+    <div class="kv small">
+      <span class="k">1 year range</span><span>${st.low52 ? `${pfmt(st.low52)} to ${pfmt(st.high52)}` : "-"}</span>
+      ${rangePos != null ? `<span class="k"></span><span><span class="range-bar"><i style="left:${Math.max(0, Math.min(100, rangePos * 100))}%"></i></span></span>` : ""}
+      <span class="k">30 / 90 days</span><span><span class="${signCls(st.chg30)}">${st.chg30 == null ? "-" : sgnPct(st.chg30)}</span> · <span class="${signCls(st.chg90)}">${st.chg90 == null ? "-" : sgnPct(st.chg90)}</span></span>
+      <span class="k">1 year</span><span class="${signCls(st.chg365)}">${st.chg365 == null ? "-" : sgnPct(st.chg365)}</span>
+      <span class="k" title="Standard deviation of daily moves, last 90 days">Daily swing</span><span>${st.vol == null ? "-" : pct(st.vol, 1)}</span>
+      <span class="k" title="How much it tends to move when the market index moves 1%">Beta</span><span>${st.beta == null ? "-" : st.beta.toFixed(2)}${st.corr != null ? ` <span class="muted">corr ${st.corr.toFixed(2)}</span>` : ""}</span>
+      <span class="k">24h volume</span><span>${short(r.vol24)} <span class="muted">${r.buyPressure != null ? pct(r.buyPressure, 0) + " buys" : ""}</span></span>
+      <span class="k">High alch</span><span>${gp(m.highalch)}</span>
+    </div>
+    <div class="tm-actions"><button class="btn small" id="tmDetails">Item details</button> <a class="btn small" href="${wikiUrl(m.name)}" target="_blank" rel="noopener">Wiki</a></div>`;
+  $("#tmDetails", host).onclick = () => openItem(m.id);
+}
+
+async function drawTmBottom(host) {
+  const box = $("#tmBottom", host), d = TM_DATA && TM_DATA.d;
+  if (!d) return;
+  $$("#tmBottomTabs button", host).forEach((b) => b.classList.toggle("on", b.dataset.k === TM.bottom));
+  if (TM.bottom === "trades") {
+    box.innerHTML = d.fills.length ? `<table>${thead([{ label: "When" }, { label: "Side" }, { label: "Qty", num: 1 }, { label: "Each", num: 1 }, { label: "Total", num: 1 }], null)}<tbody>${d.fills.map((f) => `<tr class="static"><td class="muted">${esc(fmtTime(f.t, true))}</td><td><span class="tag ${f.side === "buy" ? "free" : "pump"}">${f.side}</span></td><td class="num">${gp(f.qty)}</td><td class="num">${gp(f.gp / f.qty)}</td><td class="num">${short(f.gp)}</td></tr>`).join("")}</tbody></table>` : `<div class="empty">No trades in this item yet. With the RuneLite plugin running, your GE trades appear here.</div>`;
+    return;
+  }
+  if (TM.bottom === "signals") {
+    const daily = TM.tf === "1Y" || TM.tf === "3M" || TM.tf === "2Y" ? TM_DATA.bars : buildBars((await api(`/api/localhistory?id=${TM.id}&res=1d&days=400`)).data, 86400);
+    const now = tmSignalsNow(daily);
+    if (!TM_REPORT || TM_REPORT.running) TM_REPORT = await api("/api/indicators/report").catch(() => null);
+    const rep = TM_REPORT && TM_REPORT.signals ? new Map(TM_REPORT.signals.map((s) => [s.key, s])) : new Map();
+    box.innerHTML = `<p class="small muted" style="margin-top:0">Signals firing on this item's daily chart now, and what each signal has done across the market's history (move over the next 7 days after tax, beyond the market and beyond buying on a random day). A signal is only worth weight if it worked in both halves of the history.</p>
+      ${now.length ? `<table>${thead([{ label: "Signal now" }, { label: "History (7 days)" }, { label: "Avg extra move", num: 1 }, { label: "Times seen", num: 1 }], null)}<tbody>${now.map(([k, txt]) => { const s = rep.get(k); const h = s && s["7"]; return `<tr class="static"><td><b>${esc(txt)}</b></td><td class="${h ? VERDICT_CLS[h.verdict] || "" : "muted"}">${h ? esc(h.verdict) : TM_REPORT && TM_REPORT.running ? "Testing..." : "-"}</td><td class="num ${h ? signCls(h.excess) : ""}">${h && h.excess != null ? sgnPct(h.excess, 2) : "-"}</td><td class="num">${h ? gp(h.n) : "-"}</td></tr>`; }).join("")}</tbody></table>` : `<div class="muted">No indicator signals on this item right now${daily.length < 60 ? " (needs about 60 days of daily history)" : ""}.</div>`}
+      <p class="small"><a href="#" id="tmAllSignals">See every indicator's test</a></p>`;
+    $("#tmAllSignals", box).onclick = (e) => { e.preventDefault(); BT_SHOW_IND = true; showTab("backtest"); };
+    return;
+  }
+  box.innerHTML = `<div class="grid2 tm-news"><div id="tmNewsList"></div><div id="tmEv"><div class="muted small">Loading event history...</div></div></div>`;
+  $("#tmNewsList", box).innerHTML = d.news.length ? `<div class="news-list">${d.news.map(newsCard).join("")}</div>` : `<div class="muted small">No posts have mentioned this item in the saved news.</div>`;
+  bindNewsCards(box);
+  const ev = await api("/api/events/item?id=" + TM.id).catch(() => null);
+  if (!ev || !$("#tmEv", box)) return;
+  const s7 = ev.summary && ev.summary.d7;
+  $("#tmEv", box).innerHTML = ev.events.length ? `<h4 style="margin-top:0">How it moved around past posts</h4>
+    <p class="small muted" style="margin-top:0">Change beyond the market: the week before, the day of, and the week and month after.${s7 && s7.n ? ` Over ${s7.n} post${s7.n > 1 ? "s" : ""}, the week after averaged <b class="${signCls(s7.mean)}">${sgnPct(s7.mean, 1)}</b>.` : ""}</p>
+    <div class="tscroll"><table>${thead([{ label: "Post" }, { label: "Week before", num: 1 }, { label: "Day", num: 1 }, { label: "Week after", num: 1 }, { label: "Month after", num: 1 }], null)}<tbody>${ev.events.map((e) => `<tr class="static"><td><span class="muted small">${esc(new Date(e.t * 1000).toLocaleDateString([], { month: "short", day: "numeric", year: "2-digit" }))}</span> ${esc(e.title)}</td>${["pre7", "d1", "d7", "d30"].map((w) => `<td class="num ${signCls(e[w])}">${e[w] == null ? "-" : sgnPct(e[w], 1)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>` : `<div class="muted small">No past posts to measure yet.</div>`;
+}
+
+function bindTerminal(host) {
+  makePicker($("#tmFind", host), $("#tmFindList", host), (r) => { $("#tmFind", host).value = ""; tmSelect(host, r.id); });
+  $("#tmFind", host).placeholder = "Search an item ( / )";
+  makePicker($("#tmCmpItem", host), $("#tmCmpItemList", host), (r) => { TM.cmp = "item"; TM.cmpId = r.id; saveTM(); $("#tmCmpPick", host).hidden = true; renderers.terminal(host, false); });
+  $$("#tmLayout button", host).forEach((b) => (b.onclick = () => { TM.layout = b.dataset.k; saveTM(); renderers.terminal(host, false); }));
+  $$("#tmListTabs button", host).forEach((b) => (b.onclick = () => { TM.list = b.dataset.k; saveTM(); $$("#tmListTabs button", host).forEach((x) => x.classList.toggle("on", x === b)); drawTmList(host); }));
+  $$("#tmTf button", host).forEach((b) => (b.onclick = () => { TM.tf = b.dataset.k; saveTM(); $$("#tmTf button", host).forEach((x) => x.classList.toggle("on", x === b)); renderers.terminal(host, true); }));
+  $$("#tmType button", host).forEach((b) => (b.onclick = () => { TM.type = b.dataset.k; saveTM(); $$("#tmType button", host).forEach((x) => x.classList.toggle("on", x === b)); if (TM_DATA && TM_DATA.redraw) TM_DATA.redraw(); }));
+  $$("#tmInd button", host).forEach((b) => (b.onclick = () => { const k = b.dataset.k; TM.ind = TM.ind.includes(k) ? TM.ind.filter((x) => x !== k) : TM.ind.concat(k); saveTM(); b.classList.toggle("on"); if (TM_DATA && TM_DATA.redraw) TM_DATA.redraw(); }));
+  $("#tmCmp", host).onchange = (e) => {
+    if (e.target.value === "item") { $("#tmCmpPick", host).hidden = false; $("#tmCmpItem", host).focus(); return; }
+    TM.cmp = e.target.value; saveTM(); renderers.terminal(host, true);
+  };
+  $("#tmDraw", host).onclick = () => { TM.drawing = !TM.drawing; $("#tmDraw", host).classList.toggle("primary", TM.drawing); if (TM_DATA && TM_DATA.redraw) TM_DATA.redraw(); };
+  $("#tmClear", host).onclick = () => { store.set("tm.lines." + TM.id, []); if (TM_DATA && TM_DATA.redraw) TM_DATA.redraw(); };
+  $$("#tmBottomTabs button", host).forEach((b) => (b.onclick = () => { TM.bottom = b.dataset.k; saveTM(); drawTmBottom(host); }));
+}
+
+document.addEventListener("keydown", (e) => {
+  if (S.tab !== "terminal" || e.ctrlKey || e.metaKey || e.altKey) return;
+  const host = $("#tab-terminal");
+  if (e.target.closest("input, textarea, select")) { if (e.key === "Escape") e.target.blur(); return; }
+  const k = e.key.toLowerCase();
+  if (k === "/") { e.preventDefault(); $("#tmFind", host).focus(); return; }
+  if (k === "j" || k === "k" || k === "arrowdown" || k === "arrowup") {
+    const rows = tmListRows(); if (!rows.length) return;
+    e.preventDefault();
+    const i = rows.findIndex((r) => r.id === TM.id), step = k === "j" || k === "arrowdown" ? 1 : -1;
+    tmSelect(host, rows[Math.max(0, Math.min(rows.length - 1, (i < 0 ? -step : i) + step))].id);
+    return;
+  }
+  const tfs = Object.keys(TF);
+  if (/^[1-6]$/.test(k)) { TM.tf = tfs[+k - 1]; saveTM(); renderers.terminal(host, false); return; }
+  if (k === "c") { TM.type = TM.type === "candle" ? "line" : "candle"; saveTM(); renderers.terminal(host, false); return; }
+  if (k === "d") { $("#tmDraw", host).click(); return; }
+  if (k === "w") { toggleWatch(TM.id); return; }
+  if (k === "l") { const ls = ["trade", "chart", "research"]; TM.layout = ls[(ls.indexOf(TM.layout) + 1) % 3]; saveTM(); renderers.terminal(host, false); }
+});
+
+// News: game updates, blogs, polls and what past updates did to prices ----------------
+const NS = Object.assign({ kind: "", days: 90 }, store.get("ns", {}));
+const KIND_CLS = { game: "pump", devblog: "free", future: "free", poll: "free", community: "", technical: "", event: "", news: "" };
+let BT_SHOW_IND = false;
+function newsCard(n) {
+  const held = new Set(n.held || []);
+  return `<article class="news-card ${n.upcoming ? "upcoming" : ""}">
+    <div class="news-top"><span class="tag ${KIND_CLS[n.kind] || ""}">${esc(n.kindLabel)}</span>${n.upcoming ? `<span class="tag spike" title="Announced, not in the game yet">Upcoming</span>` : ""}<span class="muted small">${esc(new Date(n.t * 1000).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric", year: "numeric" }))}</span></div>
+    <div class="news-title">${n.url ? `<a href="${esc(n.url)}" target="_blank" rel="noopener">${esc(n.title)}</a>` : esc(n.title)}</div>
+    ${n.summary ? `<div class="small muted">${esc(n.summary)}</div>` : ""}
+    ${n.items.length ? `<div class="news-items">${n.items.slice(0, 12).map((i) => `<button class="item-chip ${held.has(i.id) ? "held" : ""}" data-tid="${i.id}" title="${held.has(i.id) ? "You hold this. " : ""}Open in the Terminal"><img alt="" src="${esc(iconUrl(i.icon))}" onerror="this.style.display='none'">${esc(i.name)}</button>`).join("")}${n.items.length > 12 ? `<span class="muted small">+${n.items.length - 12} more</span>` : ""}</div>` : ""}
+  </article>`;
+}
+function bindNewsCards(box) { $$("[data-tid]", box).forEach((b) => (b.onclick = () => openTerminal(+b.dataset.tid))); }
+function studyTable(st) {
+  const W = [["pre7", "Week before"], ["d1", "Day of"], ["d7", "Week after"], ["d30", "Month after"]];
+  const cell = (s, v) => !s || !s.n ? `<td class="num muted">-</td>` : `<td class="num" title="${s.n} item moves · higher in ${pct(s.up, 0)}${s.t != null ? ` · t ${s.t.toFixed(1)}` : ""}"><span class="${signCls(s.mean)}">${sgnPct(s.mean, 1)}</span><div class="small ${v === "rises" || v === "falls" ? (v === "rises" ? "pos" : "neg") : "muted"}">${esc(v || "")}</div></td>`;
+  const ctrl = st.control || {};
+  return `<div class="tscroll"><table>${thead([{ label: "" }].concat(W.map(([, l]) => ({ label: l, num: 1 }))), null)}<tbody>
+    ${st.groups.map((g) => `<tr class="static"><td><b>${esc(g.label)}</b><div class="small muted">${gp(g.windows.d7.n || 0)} item moves</div></td>${W.map(([k]) => cell(g.windows[k], g.verdict[k])).join("")}</tr>`).join("")}
+    <tr class="static"><td><b>Typical size of a move</b><div class="small muted">Ordinary days, either direction</div></td>${W.map(([k]) => `<td class="num muted">${ctrl[k] && ctrl[k].absMean != null ? pct(ctrl[k].absMean, 1) : "-"}</td>`).join("")}</tr>
+    ${st.groups.map((g) => `<tr class="static"><td class="small">Size of moves after: ${esc(g.label.split(" (")[0].toLowerCase())}</td>${W.map(([k]) => `<td class="num small">${g.windows[k] && g.windows[k].absMean != null ? pct(g.windows[k].absMean, 1) : "-"}</td>`).join("")}</tr>`).join("")}
+  </tbody></table></div>`;
+}
+renderers.news = async function (host) {
+  host.innerHTML = `<div class="section-head" style="margin-top:0"><h2 style="margin:0">News and updates</h2>
+      <div class="right"><div class="chips" style="margin:0" id="nsKind">${[["", "All"], ["game", "Game updates"], ["upcoming", "Upcoming"], ["held", "Mentions your items"]].map(([k, l]) => `<button class="chip ${NS.kind === k ? "on" : ""}" data-k="${k}">${l}</button>`).join("")}</div>
+      <select class="input" id="nsDays" style="width:auto">${[30, 90, 365, 800].map((d) => `<option value="${d}" ${NS.days === d ? "selected" : ""}>${d === 800 ? "2 years" : d === 365 ? "1 year" : d + " days"}</option>`).join("")}</select></div></div>
+    <p class="lede">Game updates, developer blogs, polls and Jagex news, tagged with the tradeable items each post mentions. Items you hold are highlighted. Click an item to open it in the Terminal, where its chart shows these posts as flags.</p>
+    <div class="news-layout"><div id="nsFeed"><div class="muted small">Loading...</div></div>
+      <aside><div class="card"><h3 style="margin-top:0">What posts did to prices</h3><div id="nsStudy" class="small muted">Measuring...</div></div>
+      <div class="card" style="margin-top:14px"><h3 style="margin-top:0">By item class (week after game updates)</h3><div id="nsCats" class="small muted"></div></div></aside></div>`;
+  $$("#nsKind button", host).forEach((b) => (b.onclick = () => { NS.kind = b.dataset.k; store.set("ns", NS); renderers.news(host); }));
+  $("#nsDays", host).onchange = (e) => { NS.days = +e.target.value; store.set("ns", NS); renderers.news(host); };
+  api(`/api/news?days=${NS.days}&kind=${NS.kind}&limit=200`).then((d) => {
+    const feed = $("#nsFeed", host);
+    if (!d.items.length) { feed.innerHTML = `<div class="empty">${d.status && d.status.n ? "No posts match." : "No news saved yet. The app fetches two years of posts in the background on first start."}</div>`; return; }
+    let last = "";
+    feed.innerHTML = d.items.map((n) => {
+      const mo = new Date(n.t * 1000).toLocaleDateString([], { month: "long", year: "numeric" });
+      const head = mo !== last ? `<div class="news-month">${esc(mo)}</div>` : ""; last = mo;
+      return head + newsCard(n);
+    }).join("");
+    bindNewsCards(feed);
+  }).catch((e) => ($("#nsFeed", host).innerHTML = `<div class="notice">${esc(e.message)}</div>`));
+  const loadStudy = async () => {
+    const st = await api("/api/events/study").catch(() => null);
+    if (!$("#nsStudy", host)) return;
+    if (!st || st.running) { $("#nsStudy", host).textContent = "Measuring every past post against price history..."; setTimeout(loadStudy, 3000); return; }
+    if (!st.ok) { $("#nsStudy", host).textContent = st.reason || "Not enough data yet."; return; }
+    $("#nsStudy", host).innerHTML = `<p style="margin-top:0">Each cell is the average move of the items a post mentioned, beyond the market over the same days (${gp(st.posts)} posts, ${gp(st.pairs)} item mentions${st.from ? ", since " + esc(new Date(st.from * 1000).toLocaleDateString([], { month: "short", year: "numeric" })) : ""}). A direction only counts when it stands out from noise (t of 2 or more over at least 15 moves).</p>${studyTable(st)}
+      <p style="margin-bottom:0">Compare the size rows with the typical move: if moves around posts are bigger than on ordinary days, updates bring volatility even when the direction is a coin flip.</p>`;
+    $("#nsCats", host).innerHTML = st.categories.length ? `<table>${thead([{ label: "Class" }, { label: "Moves", num: 1 }, { label: "Avg", num: 1 }, { label: "Higher", num: 1 }, { label: "" }], null)}<tbody>${st.categories.map((c) => `<tr class="static"><td>${esc(c.category)}</td><td class="num">${c.windows.d7.n}</td><td class="num ${signCls(c.windows.d7.mean)}">${sgnPct(c.windows.d7.mean, 1)}</td><td class="num">${pct(c.windows.d7.up, 0)}</td><td class="small ${c.verdict === "rises" ? "pos" : c.verdict === "falls" ? "neg" : "muted"}">${esc(c.verdict)}</td></tr>`).join("")}</tbody></table>` : "Not enough tagged posts per class yet.";
+  };
+  loadStudy();
+};
+
+// Net worth: performance vs the market, attribution, risk, heatmap -------------------
+const ATTR = [["mkt", "Market moves", "Price changes on what you held"], ["trade", "Trading", "Buying under or selling over what items are worth"], ["loot", "Loot", "Drops recorded by the Loot Tracker"], ["other", "Other", "Skilling, alching, spending, eating, player trades, deaths"]];
+function attrBars(parts) {
+  const mx = Math.max(1, ...ATTR.map(([k]) => Math.abs(parts[k] || 0)));
+  return `<div class="attr">${ATTR.map(([k, l, t]) => { const v = parts[k] || 0, w = Math.abs(v) / mx * 50; return `<div class="attr-row" title="${esc(t)}"><span class="lbl">${esc(l)}</span><span class="track"><i class="${v >= 0 ? "up" : "down"}" style="${v >= 0 ? `left:50%` : `left:${50 - w}%`};width:${w}%"></i></span><span class="val ${signCls(v)}">${signed(v, short)}</span></div>`; }).join("")}</div>`;
+}
+async function loadPerformance(host, acct, range) {
+  const box = $("#nwPerf", host);
+  if (!box) return;
+  const days = range === "all" ? "" : range;
+  const p = await api(`/api/performance?acct=${encodeURIComponent(acct)}&days=${days}`).catch(() => null);
+  if (!p || !p.ok) { box.innerHTML = `<div class="muted small">Performance appears once the app has recorded your net worth twice (it records every 5 minutes while running).</div>`; return; }
+  const rp = p.returnPct, mp = p.marketPct;
+  box.innerHTML = `<div class="perf-head">
+      <div><div class="k">Your return</div><div class="v ${signCls(rp)}">${sgnPct(rp, 2)}</div><div class="s muted">Excludes loot and other income</div></div>
+      <div><div class="k">Market index</div><div class="v ${signCls(mp)}">${mp == null ? "-" : sgnPct(mp, 2)}</div><div class="s muted">Most traded items</div></div>
+      <div><div class="k">Vs market</div><div class="v ${signCls(p.excess)}">${p.excess == null ? "-" : sgnPct(p.excess, 2)}</div><div class="s muted">${p.excess == null ? "" : p.excess >= 0 ? "Ahead" : "Behind"}</div></div>
+      <div><div class="k">Net worth change</div><div class="v ${signCls(p.change)}">${signed(p.change, short)}</div><div class="s muted">Everything included</div></div>
+    </div>
+    <div id="nwPerfChart"></div>
+    <h4>Where the change came from</h4>${attrBars(p.parts)}`;
+  lineChart($("#nwPerfChart", host), [
+    { name: "Your return", cls: "l1", color: "var(--series-1)", pts: p.series },
+    { name: "Market index", cls: "l2", color: "var(--series-2)", pts: p.benchmark || [] },
+  ], { base: 0, height: 200, fmt: (v) => (v > 0 ? "+" : "") + pct(v, Math.abs(v) < 0.1 ? 1 : 0), tipFmt: (v) => sgnPct(v, 2), aria: "Your return against the market index" });
+}
+async function loadRisk(host, acct) {
+  const box = $("#nwRisk", host);
+  if (!box) return;
+  const r = await api(`/api/risk?acct=${encodeURIComponent(acct)}`).catch(() => null);
+  if (!r || !r.ok) { box.innerHTML = `<div class="muted small">${esc((r && r.reason) || "Risk needs daily price history for what you hold.")}</div>`; return; }
+  const t = (k, v, s, cls = "") => `<div class="tile"><div class="k">${k}</div><div class="v ${cls}">${v}</div><div class="s">${s}</div></div>`;
+  box.innerHTML = `<div class="tiles risk-tiles">
+      ${t("Daily swing", r.volDaily == null ? "-" : pct(r.volDaily, 2), "Typical day, either way")}
+      ${t("Bad day", r.var1 == null ? "-" : "-" + short(r.var1), `1 day in 20 is worse (${pct(r.var1Pct, 1)})`, "neg")}
+      ${t("Bad week", r.var7 == null ? "-" : "-" + short(r.var7), `1 week in 20 is worse (${pct(r.var7Pct, 1)})`, "neg")}
+      ${t("Worst drawdown", pct(r.maxDrawdown, 1), "Past year, today's holdings", r.maxDrawdown < 0 ? "neg" : "")}
+      ${t("Beta", r.beta == null ? "-" : r.beta.toFixed(2), "Moves per 1% of market")}
+      ${t("Diversification", r.effectiveHoldings == null ? "-" : r.effectiveHoldings.toFixed(1), "Effective number of holdings")}
+      ${t("Sellable in a day", pct(r.liquid1, 0), `In a week: ${pct(r.liquid7, 0)}`)}
+    </div>
+    <p class="small muted" style="margin:0 0 8px">From how today's holdings moved on each of the past ${r.days} days${r.coverage < 0.99 ? ` (items with history cover ${pct(r.coverage, 0)} of item value)` : ""}. Sellable assumes you get ${pct(S.fillShare || 0.2, 0)} of each item's daily instant-buy volume.</p>
+    <div class="tscroll"><table>${thead([{ label: "Biggest risks" }, { label: "Weight", num: 1 }, { label: "Share of risk", num: 1, title: "How much of the account's swings come from this holding" }, { label: "Daily swing", num: 1 }, { label: "Beta", num: 1 }, { label: "Days to sell", num: 1 }], null)}<tbody>
+    ${r.items.slice(0, 8).map((i) => `<tr data-id="${i.id}"><td>${itemCell(i)}</td><td class="num">${pct(i.weight, 1)}</td><td class="num"><b>${i.riskShare == null ? "-" : pct(i.riskShare, 0)}</b></td><td class="num">${i.vol == null ? "-" : pct(i.vol, 1)}</td><td class="num">${i.beta == null ? "-" : i.beta.toFixed(2)}</td><td class="num ${i.daysToSell > 3 ? "warn-txt" : ""}">${i.daysToSell == null ? "-" : i.daysToSell < 0.1 ? "<0.1" : i.daysToSell.toFixed(1)}</td></tr>`).join("")}</tbody></table></div>`;
+  bindRowClicks(box);
+}
+function holdingsHeatmap(host, holdings) {
+  const groups = {};
+  holdings.filter((h) => h.how !== "cash" && h.value > 0).forEach((h) => { (groups[h.category] = groups[h.category] || []).push({ id: h.id, name: h.name, value: h.value, chg: h.chg24h, extra: `${gp(h.qty)} held` }); });
+  treemap($("#nwHeat", host), Object.entries(groups).map(([name, items]) => ({ name, items })), { height: 300, range: 0.05, onPick: (d) => openTerminal(d.id), aria: "Holdings heatmap", legend: "Size: value held. Color: 24h change. Click to open in the Terminal." });
 }
 
 // Money making: recipes and item sets ---------------------------------------------
@@ -1600,10 +2241,26 @@ renderers.backtest = async function (host) {
         <button class="btn primary" id="btRun">Run backtest</button></div>
       <p class="small muted" style="margin:8px 0 0">Threshold means: how far below the trailing average (dip), the 1 hour drop (dump), the minimum ROI after tax (margin), or how far above the trailing high (breakout). Volume x normal applies to dump and breakout.</p>
     </div>
-    <div id="btOut"></div>`;
+    <div id="btOut"></div>
+    <div class="card" id="btInd" style="margin-top:16px"><h3 style="margin-top:0">Do chart indicators work in OSRS?</h3><div class="small muted">Testing every indicator on the daily history...</div></div>`;
   $("#btMem", host).value = BT.members;
+  loadIndicatorReport(host);
   $("#btRun", host).onclick = () => runBacktest(host);
 };
+async function loadIndicatorReport(host) {
+  const box = $("#btInd", host);
+  if (!box) return;
+  const r = await api("/api/indicators/report").catch(() => null);
+  if (!box.isConnected) return;
+  if (r && r.running) { setTimeout(() => loadIndicatorReport(host), 3000); return; }
+  if (BT_SHOW_IND) { BT_SHOW_IND = false; box.scrollIntoView({ behavior: "smooth" }); }
+  if (!r || !r.ok) { box.innerHTML = `<h3 style="margin-top:0">Do chart indicators work in OSRS?</h3><div class="muted small">${esc((r && r.reason) || "Not available.")}</div>`; return; }
+  const cell = (h) => !h || !h.n ? `<td class="num muted">-</td><td class="muted small">too few</td>` : `<td class="num ${signCls(h.excess)}" title="Older half ${h.early == null ? "-" : sgnPct(h.early, 2)} · newer half ${h.late == null ? "-" : sgnPct(h.late, 2)} · t ${h.t == null ? "-" : h.t.toFixed(1)} · ${gp(h.n)} signals">${h.excess == null ? "-" : sgnPct(h.excess, 2)}</td><td class="small ${VERDICT_CLS[h.verdict] || ""}">${esc(h.verdict)}</td>`;
+  box.innerHTML = `<h3 style="margin-top:0">Do chart indicators work in OSRS?</h3>
+    <p class="small muted" style="margin-top:0">Every signal replayed on ${gp(r.items)} of the most traded items' daily history (${esc(new Date(r.from * 1000).toLocaleDateString([], { month: "short", year: "numeric" }))} to ${esc(new Date(r.to * 1000).toLocaleDateString([], { month: "short", year: "numeric" }))}). The number is the average move after the signal, after tax, beyond the market and beyond buying on a random day. For "avoid" signals a negative number means the signal worked. It only counts if it worked in both the older and newer half of the history.</p>
+    <div class="tscroll"><table>${thead([{ label: "Signal" }, { label: "Use" }, { label: "Next 7 days", num: 1 }, { label: "" }, { label: "Next 30 days", num: 1 }, { label: "" }], null)}<tbody>${r.signals.map((s) => `<tr class="static"><td>${esc(s.label)}</td><td class="small muted">${s.side === "buy" ? "Buy" : "Avoid"}</td>${cell(s["7"])}${cell(s["30"])}</tr>`).join("")}</tbody></table></div>
+    <p class="small muted" style="margin-bottom:0">Hover a number for each half. The hourly rules above include RSI, moving average cross and Bollinger versions you can tune.</p>`;
+}
 async function runBacktest(host) {
   const v = (id) => $(id, host).value.trim();
   Object.assign(BT, { strategy: v("#btS"), days: v("#btDays"), threshold: v("#btTh"), hold: v("#btHold"), lookback: v("#btLook"), volMult: v("#btVm"), minPrice: v("#btMinP"), maxPrice: v("#btMaxP"), minVol: v("#btMinV"), share: v("#btShare"), members: v("#btMem"), watchOnly: $("#btWatch", host).checked });
@@ -1913,7 +2570,7 @@ async function openItem(id) {
       <div><h2>${esc(m.name)} ${m.members ? '<span class="tag">Members</span>' : '<span class="tag">F2P</span>'} ${r.taxExempt ? '<span class="tag free">No tax</span>' : ""}${signalTag(r)}</h2>
       <div class="muted">${esc(m.examine || "")}</div>
       <div class="small" style="margin-top:4px"><a href="${wikiUrl(m.name)}" target="_blank" rel="noopener">Wiki page</a> · <a href="https://prices.runescape.wiki/osrs/item/${m.id}" target="_blank" rel="noopener">Wiki prices</a> · ID ${m.id}</div></div>
-      <button class="icon-btn close" id="drClose" aria-label="Close">✕</button></div>
+      <button class="btn small" id="drTerm" title="Open in the Terminal">Terminal</button><button class="icon-btn close" id="drClose" aria-label="Close">✕</button></div>
     ${r.stale ? `<div class="notice">Prices for this item haven't traded in ${ago(r.age)}. Treat them as rough.</div>` : ""}
     <div class="tiles">
       <div class="tile"><div class="k">Instant buy</div><div class="v">${gp(r.high)}</div><div class="s">${r.highTime ? ago(S.now - r.highTime) + " ago" : "-"}</div></div>
@@ -1959,6 +2616,7 @@ async function openItem(id) {
     ${d.alerts.length ? `<h3>Alerts on this item</h3><div class="small">${d.alerts.map((a) => `<div>${esc((ALERT_KINDS[a.kind] || a.kind))} ${esc(condValue(a.kind, a.threshold))}${a.extra ? " and more" : ""}${a.enabled ? "" : " (paused)"}</div>`).join("")}</div>` : ""}
     ${d.flips.length ? `<h3>Your flips</h3><div class="small">${d.flips.map((f) => `<div>${esc(fmtTime(f.buy_ts, true))}: ${gp(f.qty)} bought at ${gp(f.buy_price)}${f.sell_price != null ? `, sold at ${gp(f.sell_price)}` : " (open)"}</div>`).join("")}</div>` : ""}`;
   $("#drClose").onclick = closeItem;
+  $("#drTerm").onclick = () => openTerminal(id);
   $("#drWatch").onclick = () => toggleWatch(id);
   $$("#drLb button").forEach((b) => (b.onclick = () => { DR.lookback = b.dataset.l; store.set("lookback", DR.lookback); $$("#drLb button").forEach((x) => x.classList.toggle("on", x === b)); loadChart(id); }));
   $("#drAlertBtn").onclick = () => {

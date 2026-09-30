@@ -284,7 +284,52 @@ STRATEGIES = {
     "dump": "Buy dumps: sharp 1h drop on a volume spike",
     "margin": "Margin flip: last hour's average margin after tax beat a set ROI",
     "momentum": "Breakout: price rises a set % above its trailing high on strong volume",
+    "rsi": "RSI oversold: RSI over the lookback falls below the threshold (e.g. 30)",
+    "ma_cross": "Moving average cross: a fast average (a quarter of the lookback) crosses above the lookback average",
+    "bollinger": "Bollinger band: price closes below the lower band (lookback average minus 2 standard deviations)",
 }
+
+
+def _series_rsi(vals, n):
+    """RSI per position from a list with gaps (None); None until there is enough data."""
+    out = [None] * len(vals)
+    gain = loss = 0.0
+    prev = None
+    seen = 0
+    for i, v in enumerate(vals):
+        if v is None:
+            continue
+        if prev is not None:
+            ch = v - prev
+            g, lo = max(ch, 0.0), max(-ch, 0.0)
+            seen += 1
+            if seen <= n:
+                gain += g / n
+                loss += lo / n
+            else:
+                gain = (gain * (n - 1) + g) / n
+                loss = (loss * (n - 1) + lo) / n
+            if seen >= n:
+                out[i] = 100.0 if loss == 0 else 100.0 - 100.0 / (1 + gain / loss)
+        prev = v
+    return out
+
+
+def _series_sma(vals, n):
+    """Trailing mean and standard deviation over the last n known values."""
+    out_m, out_s = [None] * len(vals), [None] * len(vals)
+    win = []
+    for i, v in enumerate(vals):
+        if v is None:
+            continue
+        win.append(v)
+        if len(win) > n:
+            win.pop(0)
+        if len(win) == n:
+            m = sum(win) / n
+            out_m[i] = m
+            out_s[i] = math.sqrt(sum((x - m) ** 2 for x in win) / n)
+    return out_m, out_s
 
 
 def backtest(db, mapping, rows_by_id, tax, params, now=None):
@@ -368,6 +413,11 @@ def backtest(db, mapping, rows_by_id, tax, params, now=None):
         firsts = [m for m in mid[look:] if m is not None]
         if len(firsts) >= 2:
             baseline.append(firsts[-1] / firsts[0] - 1)
+        if strat == "rsi":
+            ind_rsi = _series_rsi(mid, max(3, look))
+        elif strat in ("ma_cross", "bollinger"):
+            slow_m, slow_s = _series_sma(mid, look)
+            fast_m, _ = _series_sma(mid, max(2, look // 4))
         limit = mapping.get(iid, {}).get("limit")
         busy_until = -1
         first_i = pos.get(start, look)
@@ -395,6 +445,15 @@ def backtest(db, mapping, rows_by_id, tax, params, now=None):
                 avgv = (pv[i] - pv[a]) / look
                 signal = bool(hi > float("-inf") and mid[i] >= hi * (1 + th) and avgv > 0
                               and vol[i] >= vol_mult * avgv)
+            elif strat == "rsi":
+                level = th * 100 if th < 1 else th
+                signal = ind_rsi[i] is not None and ind_rsi[i] < level
+            elif strat == "ma_cross":
+                j = max((k for k in range(a, i) if fast_m[k] is not None and slow_m[k] is not None), default=None)
+                signal = bool(j is not None and fast_m[i] is not None and slow_m[i] is not None
+                              and fast_m[j] <= slow_m[j] and fast_m[i] > slow_m[i])
+            elif strat == "bollinger":
+                signal = bool(slow_m[i] is not None and slow_s[i] and mid[i] < slow_m[i] - 2 * slow_s[i])
             if not signal:
                 continue
             e = i + 1

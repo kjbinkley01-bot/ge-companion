@@ -5,7 +5,7 @@ import os
 import threading
 import time
 
-from . import account, analytics, features, forecast, forecast_eval, hold, market, networth, recipes
+from . import account, analytics, news, features, forecast, forecast_eval, hold, market, networth, recipes
 from .config import DATA_DIR
 
 log = logging.getLogger("geco")
@@ -38,6 +38,7 @@ class Engine:
         self.hold_model = hold.load(DATA_DIR)
         account.init(db)
         networth.init(db)
+        news.init(db)
         self.demo_feed = None
         self._demo_seeded = False
         self.live = {"events": 0, "last": None, "lastIngest": None, "folder": None}
@@ -368,6 +369,7 @@ class Engine:
             except Exception as e:
                 self._err("demo RuneLite feed", e)
         self.ingest_live()
+        threading.Thread(target=self.refresh_news, kwargs={"full": True}, daemon=True, name="news").start()
         threading.Thread(target=self._loop, daemon=True, name="poller").start()
         threading.Thread(target=self.backfill, daemon=True, name="backfill").start()
 
@@ -395,13 +397,30 @@ class Engine:
             if self.demo_feed and not self._demo_seeded and self.rows:
                 self._demo_seeded = networth.seed_demo(self.db, self, self.cfg) > 0
             # Net worth: after changes (at most every 5 minutes) and every 15 minutes for price moves.
-            if self.rows and ((n and now - self._worth_at > 300) or now - self._worth_at > 900 or force_worth):
+            ready = self.rows and (self._demo_seeded or not self.demo_feed)
+            if ready and ((n and now - self._worth_at > 300) or now - self._worth_at > 900 or force_worth):
                 self._worth_at = now
                 networth.record(self.db, self, self.cfg)
             return n
         except Exception as e:
             self._err("RuneLite plugin data", e)
             return 0
+
+    def refresh_news(self, full=False, rss_only=False):
+        """Game updates, blogs and polls. First run imports two years of posts (about 40 requests)."""
+        if self.cfg.get("news_enabled", True) is False:
+            return
+        try:
+            if getattr(self.client, "is_demo", False):
+                news.demo_news(self.db, self.mapping)
+                return
+            if not rss_only:
+                have = news.status(self.db).get("n") or 0
+                news.fetch_wiki(self.db, self.client, self.mapping, days=800 if (full and not have) else 21)
+            news.fetch_rss(self.db, self.client, self.mapping)
+            analytics.clear_cache()
+        except Exception as e:
+            self._err("news", e)
 
     def stop(self):
         self._stop.set()
@@ -415,6 +434,7 @@ class Engine:
         last_mapping = time.time()
         last_jobs = time.time() - 3600 + 600  # first run 10 minutes in, after the backfill
         last_live = 0
+        last_news = last_wiki = time.time()  # the startup thread just fetched
         while not self._stop.wait(2):
             if time.time() - last_live >= 5:
                 last_live = time.time()
@@ -449,6 +469,12 @@ class Engine:
             if now - last_jobs > 3600 and self.rows:
                 last_jobs = now
                 self.hourly_jobs()
+            if now - last_news > 1800:
+                last_news = now
+                full_wiki = now - last_wiki > 6 * 3600
+                if full_wiki:
+                    last_wiki = now
+                threading.Thread(target=self.refresh_news, kwargs={"rss_only": not full_wiki}, daemon=True).start()
             if now - last_prune > 6 * 3600:
                 last_prune = now
                 try:

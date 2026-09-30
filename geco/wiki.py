@@ -18,6 +18,8 @@ HISCORE_BOARDS = {
     "hardcore": "hiscore_oldschool_hardcore_ironman",
     "ultimate": "hiscore_oldschool_ultimate",
 }
+WIKI_API = "https://oldschool.runescape.wiki/api.php"
+NEWS_RSS = "https://secure.runescape.com/m=news/latest_news.rss?oldschool=true"
 VALID_LOOKBACKS = ("6h", "24h", "7d", "30d", "6m", "1y")
 
 
@@ -42,6 +44,16 @@ class WikiClient:
         except urllib.error.HTTPError as e:
             raise ApiError(f"HTTP {e.code} from {url.split('?')[0]}") from e
         except (urllib.error.URLError, TimeoutError, ValueError) as e:
+            raise ApiError(f"Could not reach {url.split('?')[0]}: {e}") from e
+
+    def _get_text(self, url, timeout=30):
+        req = urllib.request.Request(url, headers={"User-Agent": self.user_agent})
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return resp.read()
+        except urllib.error.HTTPError as e:
+            raise ApiError(f"HTTP {e.code} from {url.split('?')[0]}") from e
+        except (urllib.error.URLError, TimeoutError) as e:
             raise ApiError(f"Could not reach {url.split('?')[0]}: {e}") from e
 
     def _cached(self, key, ttl, fn):
@@ -83,6 +95,16 @@ class WikiClient:
             f"{PRICES}/timeseries?id={int(item_id)}&lookback={lookback}"))
 
     # Hiscores ---------------------------------------------------------------
+    # News ---------------------------------------------------------------------------
+    def wiki_api(self, params):
+        """One read-only MediaWiki API query on the OSRS Wiki (update posts)."""
+        q = dict(params, format="json", formatversion="2")
+        return self._get(WIKI_API + "?" + urllib.parse.urlencode(q))
+
+    def news_rss(self):
+        """Jagex's Old School news feed (raw RSS bytes)."""
+        return self._get_text(NEWS_RSS)
+
     def hiscores(self, player, mode="normal"):
         board = HISCORE_BOARDS.get(mode, HISCORE_BOARDS["normal"])
         url = HISCORE_BASE.format(board=board, player=urllib.parse.quote(player))
