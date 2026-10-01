@@ -12,6 +12,10 @@ never reads game memory. Market data comes from public websites. Your own trades
 come from an optional RuneLite plugin that only listens to RuneLite's own events (the same
 way the Loot Tracker and GE history plugins do) and writes them to a file on your PC.
 
+![Flipping desk layout](docs/screenshots/1-flipping-desk.png)
+
+More screenshots (demo data) are in `docs/screenshots`.
+
 ## Start it
 
 1. Install Python 3.10 or newer from python.org (tick "Add python.exe to PATH"). No other
