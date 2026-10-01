@@ -12,6 +12,9 @@ import java.util.Map;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
+import javax.swing.JLabel;
 import javax.swing.SwingUtilities;
 import javax.inject.Inject;
 import lombok.extern.slf4j.Slf4j;
@@ -33,7 +36,9 @@ import net.runelite.api.events.VarbitChanged;
 import net.runelite.api.gameval.InventoryID;
 import net.runelite.api.gameval.VarPlayerID;
 import net.runelite.api.gameval.VarbitID;
+import net.runelite.client.Notifier;
 import net.runelite.client.RuneLite;
+import net.runelite.client.callback.ClientThread;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.game.ItemManager;
@@ -43,6 +48,11 @@ import net.runelite.client.plugins.PluginDescriptor;
 import net.runelite.client.plugins.loottracker.LootReceived;
 import net.runelite.client.ui.ClientToolbar;
 import net.runelite.client.ui.NavigationButton;
+import net.runelite.client.ui.overlay.OverlayManager;
+import net.runelite.client.util.LinkBrowser;
+import net.runelite.http.api.item.ItemPrice;
+import okhttp3.MediaType;
+import okhttp3.RequestBody;
 import okhttp3.Call;
 import okhttp3.Callback;
 import okhttp3.HttpUrl;
@@ -123,6 +133,18 @@ public class BankstandingPlugin extends Plugin
 	@Inject
 	private OkHttpClient http;
 
+	@Inject
+	private ClientThread clientThread;
+
+	@Inject
+	private Notifier notifier;
+
+	@Inject
+	private OverlayManager overlayManager;
+
+	@Inject
+	private BankCostOverlay bankOverlay;
+
 	private EventWriter writer;
 	private BankstandingPanel panel;
 	private NavigationButton navButton;
@@ -135,6 +157,12 @@ public class BankstandingPlugin extends Plugin
 	private String account;
 	private String name;
 	private boolean runePouchDirty;
+	private volatile int selectedItem = -1;
+	private volatile long lastNid;
+	private volatile JsonObject lastApp;
+	private volatile long lastAppTime;
+	private final AtomicBoolean refreshQueued = new AtomicBoolean();
+	private static final MediaType JSON = MediaType.parse("application/json; charset=utf-8");
 
 	@Override
 	protected void startUp()
@@ -149,12 +177,13 @@ public class BankstandingPlugin extends Plugin
 		}
 		if (config.showPanel())
 		{
-			panel = new BankstandingPanel(() -> config.appUrl());
+			panel = new BankstandingPanel(new Host());
 			navButton = NavigationButton.builder().tooltip("Bankstanding").icon(BankstandingPanel.icon())
 				.priority(7).panel(panel).build();
 			clientToolbar.addNavigation(navButton);
 			poller = executor.scheduleWithFixedDelay(this::refreshPanel, 2, 30, TimeUnit.SECONDS);
 		}
+		overlayManager.add(bankOverlay);
 	}
 
 	@Override
@@ -176,52 +205,288 @@ public class BankstandingPlugin extends Plugin
 			navButton = null;
 		}
 		panel = null;
+		overlayManager.remove(bankOverlay);
+		bankOverlay.setCosts(null);
 	}
 
 	// Side panel (reads the local app; display only) -----------------------------------
 
-	/** Asks the local Bankstanding app for a summary and shows it in the panel. */
+	/** Refreshes soon, folding a burst of triggers (several offer updates in one tick) into one. */
+	private void requestRefresh()
+	{
+		if (panel != null && refreshQueued.compareAndSet(false, true))
+		{
+			executor.schedule(() ->
+			{
+				refreshQueued.set(false);
+				refreshPanel();
+			}, 400, TimeUnit.MILLISECONDS);
+		}
+	}
+
+	/** Reads the GE slots on the client thread, then asks the app for the rest. */
 	private void refreshPanel()
 	{
-		BankstandingPanel p = panel;
-		if (p == null)
+		if (panel == null)
 		{
 			return;
 		}
+		clientThread.invokeLater(() ->
+		{
+			PanelState st = new PanelState();
+			st.selectedItem = selectedItem;
+			st.loggedIn = client.getGameState() == GameState.LOGGED_IN;
+			if (st.loggedIn)
+			{
+				GrandExchangeOffer[] offers = client.getGrandExchangeOffers();
+				for (int i = 0; offers != null && i < offers.length; i++)
+				{
+					GrandExchangeOffer o = offers[i];
+					PanelState.Slot sl = new PanelState.Slot();
+					sl.slot = i;
+					if (o != null && o.getState() != null)
+					{
+						sl.state = o.getState().name();
+						sl.itemId = o.getItemId();
+						sl.price = o.getPrice();
+						sl.total = o.getTotalQuantity();
+						sl.done = o.getQuantitySold();
+						sl.spent = o.getSpent();
+						if (sl.itemId > 0)
+						{
+							sl.name = itemManager.getItemComposition(sl.itemId).getName();
+							addLocal(st, sl.itemId);
+						}
+					}
+					st.slots.add(sl);
+				}
+			}
+			if (st.selectedItem > 0)
+			{
+				addLocal(st, st.selectedItem);
+			}
+			executor.execute(() -> fetchApp(st));
+		});
+	}
+
+	private void addLocal(PanelState st, int id)
+	{
+		if (st.local.containsKey(id))
+		{
+			return;
+		}
+		PanelState.Local l = new PanelState.Local();
+		net.runelite.api.ItemComposition c = itemManager.getItemComposition(id);
+		l.name = c.getName();
+		l.haPrice = c.getHaPrice();
+		l.price = itemManager.getItemPrice(id);
+		st.local.put(id, l);
+	}
+
+	private HttpUrl appUrl(String path)
+	{
 		HttpUrl base = HttpUrl.parse(config.appUrl().trim());
-		if (base == null)
+		return base == null ? null : base.newBuilder().addPathSegments(path).build();
+	}
+
+	private void fetchApp(PanelState st)
+	{
+		HttpUrl u = appUrl("api/plugin/panel");
+		if (u == null)
 		{
-			SwingUtilities.invokeLater(() -> p.showMessage("The app address in the plugin settings is not valid."));
+			finish(st, null);
 			return;
 		}
-		HttpUrl.Builder url = base.newBuilder().addPathSegments("api/plugin/summary");
-		if (geItem > 0)
+		StringBuilder ids = new StringBuilder();
+		for (PanelState.Slot sl : st.slots)
 		{
-			url.addQueryParameter("item", Integer.toString(geItem));
+			if (sl.itemId > 0)
+			{
+				ids.append(ids.length() > 0 ? "," : "").append(sl.itemId);
+			}
 		}
-		http.newCall(new Request.Builder().url(url.build()).build()).enqueue(new Callback()
+		HttpUrl.Builder b = u.newBuilder().addQueryParameter("slots", ids.toString())
+			.addQueryParameter("since", Long.toString(lastNid));
+		if (account != null)
+		{
+			b.addQueryParameter("acct", account);
+		}
+		if (st.selectedItem > 0)
+		{
+			b.addQueryParameter("item", Integer.toString(st.selectedItem));
+		}
+		http.newCall(new Request.Builder().url(b.build()).build()).enqueue(new Callback()
 		{
 			@Override
 			public void onFailure(Call call, IOException e)
 			{
-				SwingUtilities.invokeLater(() -> p.showMessage("Start the Bankstanding app (start.bat) to see your net worth and suggested prices here."));
+				finish(st, null);
 			}
 
 			@Override
 			public void onResponse(Call call, Response response) throws IOException
 			{
-				try (ResponseBody b = response.body())
+				try (ResponseBody body = response.body())
 				{
-					if (!response.isSuccessful() || b == null)
-					{
-						SwingUtilities.invokeLater(() -> p.showMessage("The app answered with an error (" + response.code() + ")."));
-						return;
-					}
-					JsonObject o = gson.fromJson(b.string(), JsonObject.class);
-					SwingUtilities.invokeLater(() -> p.show(o));
+					JsonObject o = response.isSuccessful() && body != null ? gson.fromJson(body.string(), JsonObject.class) : null;
+					finish(st, o);
+				}
+				catch (RuntimeException e)
+				{
+					finish(st, null);
 				}
 			}
 		});
+	}
+
+	private void finish(PanelState st, JsonObject o)
+	{
+		long now = System.currentTimeMillis();
+		if (o != null)
+		{
+			lastApp = o;
+			lastAppTime = now;
+			st.app = o;
+			st.appTime = now;
+			JsonObject h = Fmt.obj(o, "header");
+			st.status = Fmt.bool(h, "live") ? PanelState.AppStatus.LIVE : PanelState.AppStatus.STALE;
+			Double top = Fmt.num(o, "lastNid");
+			if (lastNid > 0 && config.notifyAlerts())
+			{
+				for (com.google.gson.JsonElement e : Fmt.arr(o, "notifications"))
+				{
+					notifier.notify("Bankstanding: " + Fmt.str(e.getAsJsonObject(), "message"));
+				}
+			}
+			if (top != null)
+			{
+				lastNid = Math.max(lastNid, top.longValue());
+			}
+			bankOverlay.setCosts(config.bankTooltip() ? Fmt.obj(o, "costs") : null);
+		}
+		else if (lastApp != null && now - lastAppTime < 10 * 60_000)
+		{
+			// Keep showing the last answer for a while, marked as old.
+			st.app = lastApp;
+			st.appTime = lastAppTime;
+			st.status = PanelState.AppStatus.STALE;
+		}
+		else
+		{
+			st.status = PanelState.AppStatus.OFFLINE;
+			bankOverlay.setCosts(null);
+		}
+		BankstandingPanel p = panel;
+		if (p != null)
+		{
+			SwingUtilities.invokeLater(() -> p.update(st));
+		}
+	}
+
+	private void send(String method, HttpUrl u, Object body)
+	{
+		if (u == null)
+		{
+			return;
+		}
+		Request.Builder rb = new Request.Builder().url(u);
+		if ("DELETE".equals(method))
+		{
+			rb.delete();
+		}
+		else
+		{
+			rb.post(RequestBody.create(JSON, gson.toJson(body)));
+		}
+		http.newCall(rb.build()).enqueue(new Callback()
+		{
+			@Override
+			public void onFailure(Call call, IOException e)
+			{
+				log.debug("Bankstanding app request failed", e);
+			}
+
+			@Override
+			public void onResponse(Call call, Response response)
+			{
+				response.close();
+				requestRefresh();
+			}
+		});
+	}
+
+	/** What the panel can ask of the plugin. Nothing here touches the game. */
+	private class Host implements PanelHost
+	{
+		@Override
+		public void icon(int itemId, int quantity, JLabel target)
+		{
+			itemManager.getImage(itemId, Math.max(1, quantity), quantity > 1).addTo(target);
+		}
+
+		@Override
+		public void selectItem(int itemId)
+		{
+			selectedItem = itemId;
+			requestRefresh();
+		}
+
+		@Override
+		public void search(String query, Consumer<List<Object[]>> results)
+		{
+			clientThread.invokeLater(() ->
+			{
+				List<Object[]> out = new ArrayList<>();
+				for (ItemPrice ip : itemManager.search(query))
+				{
+					out.add(new Object[]{ip.getId(), ip.getName()});
+					if (out.size() >= 25)
+					{
+						break;
+					}
+				}
+				SwingUtilities.invokeLater(() -> results.accept(out));
+			});
+		}
+
+		@Override
+		public void openDashboard(String path)
+		{
+			LinkBrowser.browse(config.appUrl().trim().replaceAll("/+$", "") + path);
+		}
+
+		@Override
+		public void setWatched(int itemId, boolean watched)
+		{
+			if (watched)
+			{
+				Map<String, Object> b = new HashMap<>();
+				b.put("id", itemId);
+				send("POST", appUrl("api/watchlist"), b);
+			}
+			else
+			{
+				HttpUrl u = appUrl("api/watchlist");
+				send("DELETE", u == null ? null : u.newBuilder().addQueryParameter("id", Integer.toString(itemId)).build(), null);
+			}
+		}
+
+		@Override
+		public void addTarget(int itemId, String side, long price, Long quantity)
+		{
+			Map<String, Object> b = new HashMap<>();
+			b.put("item_id", itemId);
+			b.put("side", side);
+			b.put("price", price);
+			b.put("qty", quantity);
+			send("POST", appUrl("api/targets"), b);
+		}
+
+		@Override
+		public void refresh()
+		{
+			requestRefresh();
+		}
 	}
 
 	@Provides
@@ -276,6 +541,7 @@ public class BankstandingPlugin extends Plugin
 				}
 				pending.clear();
 				runePouchDirty = true;
+				requestRefresh();
 			}
 		}
 		if (runePouchDirty && account != null && config.recordContainers())
@@ -289,9 +555,12 @@ public class BankstandingPlugin extends Plugin
 		if (item != geItem)
 		{
 			geItem = item;
-			if (panel != null && item > 0)
+			if (panel != null && item > 0 && config.followGeItem())
 			{
-				executor.execute(this::refreshPanel);
+				selectedItem = item;
+				BankstandingPanel p = panel;
+				SwingUtilities.invokeLater(p::showItemTab);
+				requestRefresh();
 			}
 		}
 	}
@@ -321,6 +590,7 @@ public class BankstandingPlugin extends Plugin
 		{
 			emitOrQueue(e);
 		}
+		requestRefresh();
 	}
 
 	// Holdings ---------------------------------------------------------------------------

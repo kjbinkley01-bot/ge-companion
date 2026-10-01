@@ -51,6 +51,15 @@ tasks.register('run', JavaExec) {
 	args "--developer-mode", "--debug"
 }
 
+// Renders the side panel outside the game to PNGs (needs a running app, demo mode is fine):
+// ./gradlew previewPanel -Papp=http://127.0.0.1:8799 -Pout=build/preview
+tasks.register('previewPanel', JavaExec) {
+	classpath = sourceSets.test.runtimeClasspath
+	mainClass = 'com.bankstanding.PanelPreview'
+	jvmArgs "--add-opens=java.base/java.lang.reflect=ALL-UNNAMED", "--add-opens=java.desktop/sun.awt=ALL-UNNAMED"
+	args = [project.findProperty('app') ?: 'http://127.0.0.1:8799', project.findProperty('out') ?: 'build/preview']
+}
+
 tasks.register('shadowJar', Jar) {
 	dependsOn configurations.testRuntimeClasspath
 	manifest {

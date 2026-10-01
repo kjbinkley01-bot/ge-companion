@@ -219,6 +219,43 @@ class ServerSecurityTests(Base):
                                                                  **{"Content-Type": "application/json"})), 403)
 
 
+class PanelTests(Base):
+    """The RuneLite side panel's one request."""
+
+    def test_panel_payload(self):
+        from geco import panel
+        targets.init(self.db)
+        now = time.time()
+        self.write([ev(now - 4000, "login"),
+                    ev(now - 3900, "container", container="inventory", items=[[995, 3_000_000], [SHARK, 100]]),
+                    offer(now - 3800, 1, "BUYING", SHARK, 990, 100, 0, 0),
+                    offer(now - 3700, 1, "BOUGHT", SHARK, 990, 100, 100, 99_000),
+                    offer(now - 3600, 0, "BUYING", SHARK, 950, 1000, 0, 0)])
+        account.ingest(self.db, self.folder)
+        eng = FakeEngine({SHARK: (1100, 980), WHIP: (750_000, 690_000)})
+        eng.lock = threading.Lock()
+        eng.status = {"last_latest": now}
+        for r in eng.rows:
+            r.update(profit=r["high"] - eng.tax(r["high"], r["id"]) - r["low"], vol24=50_000, adj4h=1000, lv24=1000, hv24=1000)
+        eng.fill_rates = None
+
+        class App:
+            pass
+        app = App()
+        app.engine, app.db, app.cfg = eng, self.db, dict(config.DEFAULTS)
+        d = panel.build(app, acct=ACCT, item=SHARK, slot_items=[SHARK], now=now)
+        self.assertEqual(d["header"]["acctName"], "Zezima")
+        self.assertTrue(d["header"]["live"])
+        self.assertEqual(d["prices"][str(SHARK)]["low"], 980)
+        self.assertEqual(d["slotNotes"]["0"]["kind"], "stale_buy")
+        self.assertEqual(d["item"]["held"], 200)  # 100 in the inventory plus 100 bought, waiting in the GE
+        self.assertGreater(d["item"]["breakeven"], 990)
+        self.assertEqual([r["id"] for r in d["ideas"]["rows"]], [SHARK])  # the whip costs more than the cash on hand
+        self.assertEqual(d["notifications"], [])  # first call only learns the latest id
+        self.assertIn(str(SHARK), d["costs"])
+        self.assertEqual(panel.build(app, acct="unknown", now=now)["header"]["acctName"], "All accounts")
+
+
 class DesktopTests(unittest.TestCase):
     def test_running_and_autostart_command(self):
         from geco import desktop

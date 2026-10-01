@@ -422,6 +422,12 @@ def make_handler(app):
                 for c in cats:
                     c["names"] = [(E.mapping.get(i) or {}).get("name") for i in c["items"]]
                 return self._send(200, {"categories": cats})
+            if path == "/api/plugin/panel":
+                from . import panel
+                slots = [int(x) for x in (q.get("slots") or "").split(",") if x.strip().lstrip("-").isdigit()]
+                return self._send(200, panel.build(app, acct=q.get("acct") or None,
+                                                   item=int(q["item"]) if q.get("item", "").isdigit() else None,
+                                                   slot_items=slots[:8], since_nid=int(q.get("since") or 0)))
             if path == "/api/plugin/summary":
                 return self._send(200, _plugin_summary(app, int(q["item"]) if q.get("item") else None))
             if path == "/api/statement":

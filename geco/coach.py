@@ -45,6 +45,11 @@ def recovery_odds(db, engine, iid, needed, days=7, history=400):
     return (hits / n if n else None), n
 
 
+def _fmt_idle(seconds):
+    m = int(seconds // 60)
+    return f"{m} min" if m < 90 else f"{seconds / 3600:.1f} hours" if seconds < 48 * 3600 else f"{seconds / 86400:.0f} days"
+
+
 def check(db, engine, cfg, now=None):
     """[{kind, acct, item, name, title, detail, severity, suggest, ...}] needing attention."""
     from . import account
@@ -74,7 +79,7 @@ def check(db, engine, cfg, now=None):
             if gap > 0.003 and idle > IDLE_MIN:
                 new = mk + 1 if mk < 1000 else int(mk * 1.001) + 1
                 out.append(dict(base, kind="stale_buy", severity="warn",
-                                title=f"{name}: buy at {o['price']:,} has not filled for {int(idle // 60)} min",
+                                title=f"{name}: buy at {o['price']:,} has not filled for {_fmt_idle(idle)}",
                                 detail=f"The market is buying at {mk:,} ({gap * 100:.1f}% above your offer). "
                                        f"At {new:,} the remaining {left:,} would likely fill in about "
                                        f"{_fmt_h(eta_now)} at your usual share.",
@@ -95,7 +100,7 @@ def check(db, engine, cfg, now=None):
             if gap > 0.003 and idle > IDLE_MIN:
                 new = mk - 1 if mk < 1000 else int(mk * 0.999) - 1
                 out.append(dict(base, kind="stale_sell", severity="warn",
-                                title=f"{name}: sell at {o['price']:,} has not filled for {int(idle // 60)} min",
+                                title=f"{name}: sell at {o['price']:,} has not filled for {_fmt_idle(idle)}",
                                 detail=f"The market is selling at {mk:,} ({gap * 100:.1f}% under your offer). "
                                        f"At {new:,} the remaining {left:,} would likely sell in about {_fmt_h(eta_now)}.",
                                 suggest=new, eta=eta_now))

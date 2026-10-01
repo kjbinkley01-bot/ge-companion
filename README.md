@@ -125,9 +125,18 @@ Accuracy notes:
 * **Phone.** Settings can send GE fills, alerts, coach warnings, limit resets and the daily bank
   statement to Discord (your own webhook) or the ntfy app. It can also let your phone open the
   dashboard on home Wi-Fi with a password.
-* **RuneLite side panel.** The plugin adds a panel showing your net worth, suggested buy and
-  sell prices for the item you have open on the GE screen, and offers that need attention.
-  It only displays information; you place every offer yourself.
+* **RuneLite side panel.** Net worth and today's change at the top, then four tabs.
+  **Offers**: your eight GE slots with fill progress, the market price each is competing with,
+  and a suggested price and fill time when one stalls. **Item**: whatever you pick on the GE
+  offer screen (or search), with instant prices, margin after tax, buy limit left and reset,
+  fill time, a 24 hour chart, your average cost, break-even and profit, targets and news, plus
+  Watch, Set target and Open in the dashboard. **Ideas**: the best flips your cash can fund
+  over your free slots, and your watchlist. **Wealth**: cash, items and GE, profit today,
+  offers needing attention, buy limits resetting soon and your biggest holdings. Hovering an
+  item in the bank shows your average cost and profit, and app alerts arrive as RuneLite
+  notifications. Without the app running, the panel still shows your slots with RuneLite's
+  prices. It only displays information; you place every offer yourself.
+  ![Side panel](docs/screenshots/9-runelite-panel.png)
 * **News.** On first start the app also reads two years of update posts from the OSRS Wiki
   (about 40 bulk requests, one a second) and then checks Jagex's news feed every 30 minutes.
   Set `news_enabled` to false in `data/config.json` to turn it off.

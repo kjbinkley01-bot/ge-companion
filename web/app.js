@@ -3813,6 +3813,9 @@ async function loadMarket() {
       const want = new URLSearchParams(location.search).get("layout");
       if (want && layoutById(want)) { if (!OPEN_TABS.includes("L:" + want)) { OPEN_TABS.push("L:" + want); store.set("openTabs", OPEN_TABS); } showTab("L:" + want); }
       else showTab(S.tab in renderers || (isLayoutTab(S.tab) && layoutById(S.tab.slice(2))) ? S.tab : "networth");
+      // Links from the RuneLite side panel: /?item=ID opens that item in the Terminal.
+      const linked = +new URLSearchParams(location.search).get("item");
+      if (linked > 0) { openTerminal(linked); history.replaceState(null, "", location.pathname); }
     }
     else if (["flips", "movers", "alch", "market", "networth"].includes(S.tab) || isLayoutTab(S.tab)) { API_CACHE.clear(); renderTab(S.tab, true); }
   } catch (e) {

@@ -60,8 +60,17 @@ A free alternative to GE Tracker premium, built only on public, read-only data.
   state, item, price, total, done, spent: cumulative), container (bank, inventory, equipment,
   looting_bag, seed_vault, rune_pouch, death_storage, ge_collect_0..7; items as [[id, qty]],
   noted ids canonicalized), loot, xp. JUnit tests: `gradle test` in that folder.
-  Side panel (display only): polls `/api/plugin/summary` on the app (config `appUrl`) every 30
-  seconds and when the GE offer item (varp TRADINGPOST_SEARCH) changes.
+  Side panel (display only, `BankstandingPanel`, tabs Offers, Item, Ideas, Wealth): the plugin
+  reads GE slots and RuneLite item info on the client thread (`PanelState`), then one GET to
+  `/api/plugin/panel` (`geco/panel.py`: header, prices and coach notes for slot items, item
+  detail with 24h spark, ideas for cash over free slots, watchlist, account, `costs` for the
+  bank tooltip, notifications since the last nid). Refreshes every 30 seconds, on offer
+  changes, login and the GE item (varp TRADINGPOST_SEARCH, `followGeItem`), debounced; keeps
+  the last answer 10 minutes marked stale, else falls back to RuneLite prices. `PanelHost`
+  separates the panel from RuneLite services (watch and targets POST to the app; dashboard
+  links open `/?item=ID`, which the dashboard opens in the Terminal). `BankCostOverlay` adds
+  the bank hover tooltip. RuneScape fonts lack triangles, so `Ui.Triangle` draws them.
+  `gradlew previewPanel -Papp=... -Pout=...` renders each tab to PNG from a running app.
 * `geco/account.py`: ingests plugin files incrementally (byte offsets, whole lines only), keeps
   latest GE offers, reconstructs fills from cumulative offer changes, FIFO matches them into
   automatic flip log rows (`flips.source='auto'`, rebuilt each time; `flip_ignore` opts out).

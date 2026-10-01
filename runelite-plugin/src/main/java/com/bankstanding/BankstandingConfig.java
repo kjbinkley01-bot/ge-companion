@@ -67,7 +67,7 @@ public interface BankstandingConfig extends Config
 	@ConfigItem(
 		keyName = "showPanel",
 		name = "Show side panel",
-		description = "A side panel with your net worth, suggested prices for the item on the GE screen and offers that need attention (reads the Bankstanding app on this computer; display only)",
+		description = "A side panel with your net worth, GE slots with tips, item prices, flip ideas and your account (reads the Bankstanding app on this computer; display only)",
 		position = 6
 	)
 	default boolean showPanel()
@@ -84,5 +84,38 @@ public interface BankstandingConfig extends Config
 	default String appUrl()
 	{
 		return "http://127.0.0.1:8765";
+	}
+
+	@ConfigItem(
+		keyName = "followGeItem",
+		name = "Follow the GE screen",
+		description = "When you pick an item on the Grand Exchange offer screen, show it on the side panel's Item tab",
+		position = 8
+	)
+	default boolean followGeItem()
+	{
+		return true;
+	}
+
+	@ConfigItem(
+		keyName = "notifyAlerts",
+		name = "Notify alerts",
+		description = "Show a RuneLite notification when the app raises an alert (price targets, stalled offers, limit resets)",
+		position = 9
+	)
+	default boolean notifyAlerts()
+	{
+		return true;
+	}
+
+	@ConfigItem(
+		keyName = "bankTooltip",
+		name = "Cost in bank tooltip",
+		description = "When hovering an item in the bank, show your average cost, its value now and your profit or loss",
+		position = 10
+	)
+	default boolean bankTooltip()
+	{
+		return true;
 	}
 }
