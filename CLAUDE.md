@@ -15,7 +15,17 @@ A free alternative to GE Tracker premium, built only on public, read-only data.
 * Do not use em dashes or en dashes anywhere (code comments, UI text, docs).
 
 ## Layout
-* `run.py`: entry point (`--demo` for offline synthetic data, `--no-browser`, `--port`).
+* `run.py`: entry point (`--demo` for offline synthetic data, `--no-browser`, `--port`,
+  `--background`, `--open`, `--runelite`, `--install`, `--uninstall`).
+* `geco/desktop.py`: Windows desktop use without console windows. `install.bat` (once) sets a
+  HKCU Run key (`pythonw run.py --background`, single instance, logs to
+  `data/bankstanding.log`, retries the item list every minute if offline) and .lnk icons on the
+  Desktop and in Programs via PowerShell WScript.Shell (`web/bankstanding.ico`). `--open`
+  starts the server if needed then opens a browser tab; `--runelite` runs `gradlew --no-daemon
+  run` hidden (log `data/runelite.log`, message box on failure). `/api/desktop` backs the
+  Settings card "On this PC". RuneLite enables developer mode (needed for sideloaded plugins)
+  only when no launcher version is set, so the plugin cannot load in the launcher's client;
+  the build checks for a new RuneLite release every 30 minutes.
 * `geco/wiki.py`: Wiki prices API (`/mapping`, `/latest`, `/5m`, `/1h`, `/timeseries`) and
   hiscores (`index_lite.json`, per account type).
 * `geco/engine.py`: background poller. Backfills missing hourly windows (`backfill_hours`,

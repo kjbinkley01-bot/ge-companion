@@ -145,9 +145,13 @@ def make_handler(app):
             path, q = self._qs()
             if not path.startswith("/api/"):
                 return self._static(path)
+            if path == "/api/desktop":
+                from . import desktop
+                return self._send(200, desktop.status())
             if path == "/api/status":
                 with E.lock:
                     st = dict(E.status)
+                st["app"] = "bankstanding"
                 st["items"] = len(E.mapping)
                 st["priced"] = len(E.rows)
                 st["dbBytes"] = os.path.getsize(D.path) if os.path.exists(D.path) else 0
@@ -532,6 +536,18 @@ def make_handler(app):
             path, q = self._qs()
             b = self._json_body()
             now = int(time.time())
+            if path == "/api/desktop":
+                # This PC: start with Windows, icons, and opening RuneLite with the plugin.
+                from . import desktop
+                if not desktop.IS_WIN:
+                    raise ValueError("These options are for Windows")
+                if "autostart" in b:
+                    desktop.set_autostart(bool(b["autostart"]))
+                if "shortcuts" in b:
+                    (desktop.make_shortcuts if b["shortcuts"] else desktop.remove_shortcuts)()
+                if b.get("runelite"):
+                    desktop._spawn([desktop.pythonw(), desktop.RUN_PY, "--runelite"])
+                return self._send(200, desktop.status())
             if path == "/api/watchlist":
                 D.run("INSERT OR IGNORE INTO watchlist (id, added) VALUES (?,?)", (int(b["id"]), now))
                 return self._send(200, {"ok": True})

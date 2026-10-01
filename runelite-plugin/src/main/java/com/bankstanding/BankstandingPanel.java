@@ -11,11 +11,14 @@ import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
 import java.text.NumberFormat;
 import java.util.Locale;
+import java.util.function.Supplier;
 import javax.swing.BorderFactory;
+import javax.swing.JButton;
 import javax.swing.JLabel;
 import javax.swing.SwingConstants;
 import net.runelite.client.ui.ColorScheme;
 import net.runelite.client.ui.PluginPanel;
+import net.runelite.client.util.LinkBrowser;
 
 /**
  * Side panel that shows what the Bankstanding app knows: net worth, the item open on the GE
@@ -28,14 +31,19 @@ class BankstandingPanel extends PluginPanel
 	private static final Color DOWN = new Color(255, 80, 0);
 	private final JLabel body = new JLabel();
 
-	BankstandingPanel()
+	BankstandingPanel(Supplier<String> appUrl)
 	{
-		setLayout(new BorderLayout());
+		setLayout(new BorderLayout(0, 10));
 		setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
 		setBackground(ColorScheme.DARK_GRAY_COLOR);
+		// Opens the dashboard in the web browser (a link, like the Wiki button elsewhere).
+		JButton open = new JButton("Open dashboard");
+		open.setFocusable(false);
+		open.addActionListener(e -> LinkBrowser.browse(appUrl.get().trim()));
+		add(open, BorderLayout.NORTH);
 		body.setVerticalAlignment(SwingConstants.TOP);
 		body.setForeground(Color.WHITE);
-		add(body, BorderLayout.NORTH);
+		add(body, BorderLayout.CENTER);
 		showMessage("Waiting for the Bankstanding app...");
 	}
 

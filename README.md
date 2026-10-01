@@ -20,8 +20,16 @@ More screenshots (demo data) are in `docs/screenshots`.
 
 1. Install Python 3.10 or newer from python.org (tick "Add python.exe to PATH"). No other
    packages are needed.
-2. Double-click `start.bat`. The dashboard opens at http://127.0.0.1:8765
-3. Leave the black window open while you use it. Close it (or press Ctrl+C) to stop.
+2. Double-click `install.bat` once. From then on Bankstanding runs quietly in the background
+   (no black window) and starts when you sign in to Windows. It adds two icons to your
+   desktop and Start menu:
+   * **Bankstanding** opens the dashboard in your browser (http://127.0.0.1:8765).
+   * **Bankstanding RuneLite** opens RuneLite with the plugin (see below).
+   Turn either off in Settings, or run `uninstall.bat` to undo it all (your data is kept).
+   The background log is `data/bankstanding.log`.
+
+Prefer a window you can watch? `start.bat` still runs it in the foreground (close the window
+or press Ctrl+C to stop).
 
 The first run downloads the item list, the last 24 hours of hourly prices and the last 6 hours
 of 5 minute prices (about 100 small bulk requests, one a second, so under two minutes).
@@ -39,8 +47,13 @@ trade lands in the flip log on its own. Nothing is sent anywhere: the plugin wri
 `.runelite/bankstanding` in your user folder and this app reads it.
 
 1. Install Java 17 or newer (Adoptium Temurin is free; Java 25 works).
-2. Double-click `runelite-plugin/run-plugin.bat` (or run `gradlew run` in that folder). The
-   first run downloads RuneLite's libraries, then opens RuneLite with the plugin loaded.
+2. Open the **Bankstanding RuneLite** icon (or Settings, "Open RuneLite with the plugin", or
+   `runelite-plugin/run-plugin.bat`). The first run downloads RuneLite's libraries (a few
+   minutes), then opens RuneLite with the plugin loaded; later starts take about 20 seconds
+   and pick up new RuneLite releases on their own. The side panel's "Open dashboard" button
+   opens the dashboard. Problems are logged to `data/runelite.log`.
+   RuneLite only loads a plugin from outside the Plugin Hub when it is not started by the
+   official launcher, so this icon is how the plugin runs until it is on the Plugin Hub.
    If you log in with a Jagex account, follow RuneLite's guide for using a Jagex account with
    a development client (it is a one time setup of the launcher's credentials).
 3. Log in, open your bank once, and open the Grand Exchange once. After that it is automatic.

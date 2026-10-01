@@ -14,6 +14,11 @@ repositories {
 }
 
 def runeLiteVersion = 'latest.release'
+// Check for a new RuneLite release at most every 30 minutes, so the desktop shortcut keeps
+// the client current after game updates.
+configurations.configureEach {
+	resolutionStrategy.cacheDynamicVersionsFor 30, 'minutes'
+}
 def pluginMainClass = 'com.bankstanding.BankstandingPluginTest'
 
 dependencies {

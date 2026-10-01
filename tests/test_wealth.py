@@ -219,5 +219,15 @@ class ServerSecurityTests(Base):
                                                                  **{"Content-Type": "application/json"})), 403)
 
 
+class DesktopTests(unittest.TestCase):
+    def test_running_and_autostart_command(self):
+        from geco import desktop
+        self.assertFalse(desktop.running(1, timeout=0.2))
+        cmd = desktop.autostart_command()
+        self.assertIn("run.py", cmd)
+        self.assertTrue(cmd.endswith("--background"))
+        self.assertTrue(os.path.exists(desktop.ICON))
+
+
 if __name__ == "__main__":
     unittest.main()

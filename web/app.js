@@ -3501,6 +3501,12 @@ renderers.settings = async function (host) {
       ${st.errors.length ? `<h3>Recent problems</h3><div class="small err">${st.errors.map(esc).join("<br>")}</div>` : `<p class="small muted" style="margin-top:12px">No problems reported.</p>`}
       </div>
     </div>
+    <div class="card" id="dkCard" style="margin-top:16px" hidden><h3 style="margin-top:0">On this PC</h3>
+      <p class="small muted" style="margin-top:0">Bankstanding can run quietly in the background with no black window, starting when you sign in to Windows. The icons open the dashboard in your browser, or RuneLite with the Bankstanding plugin.</p>
+      <div class="inline-form" style="margin-top:0">
+        <label class="check"><input type="checkbox" id="dkAuto"> Start with Windows</label>
+        <label class="check"><input type="checkbox" id="dkIcons"> Desktop and Start menu icons</label>
+        <button class="btn" id="dkRl">Open RuneLite with the plugin</button><span id="dkMsg" class="small muted"></span></div></div>
     <div class="grid2" style="margin-top:16px">
       <div class="card"><h3 style="margin-top:0">Phone notifications</h3>
         <p class="small muted" style="margin-top:0">Optional. Use a Discord webhook for one of your channels (Server Settings, Integrations, Webhooks), or an ntfy topic: install the ntfy app on your phone and subscribe to a long random topic name (anyone who knows the name can read it).</p>
@@ -3521,6 +3527,18 @@ renderers.settings = async function (host) {
         <h3>Your fill rates</h3><div id="frBox" class="small muted">Loading...</div></div>
     </div>
     <p class="small muted" style="margin-top:16px">Prices come from the OSRS Wiki real-time prices API (data provided by RuneLite users). They're strong estimates, not guarantees: price check in game before big flips.</p>`;
+  api("/api/desktop").then((d) => {
+    if (!d.windows || !$("#dkCard", host)) return;
+    $("#dkCard", host).hidden = false;
+    $("#dkAuto", host).checked = d.autostart; $("#dkIcons", host).checked = d.shortcuts;
+    const set = async (body, msg) => {
+      try { const r = await api("/api/desktop", { method: "POST", body }); $("#dkAuto", host).checked = r.autostart; $("#dkIcons", host).checked = r.shortcuts; $("#dkMsg", host).textContent = msg; }
+      catch (e) { $("#dkMsg", host).innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+    };
+    $("#dkAuto", host).onchange = (e) => set({ autostart: e.target.checked }, e.target.checked ? "Starts with Windows." : "No longer starts with Windows.");
+    $("#dkIcons", host).onchange = (e) => set({ shortcuts: e.target.checked }, e.target.checked ? "Icons added." : "Icons removed.");
+    $("#dkRl", host).onclick = () => set({ runelite: true }, "Opening RuneLite (about 20 seconds; the first time takes a few minutes).");
+  }).catch(() => {});
   $("#stSave", host).onclick = async () => {
     const v = (id) => $(id, host).value;
     try {

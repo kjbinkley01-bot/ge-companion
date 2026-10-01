@@ -149,7 +149,7 @@ public class BankstandingPlugin extends Plugin
 		}
 		if (config.showPanel())
 		{
-			panel = new BankstandingPanel();
+			panel = new BankstandingPanel(() -> config.appUrl());
 			navButton = NavigationButton.builder().tooltip("Bankstanding").icon(BankstandingPanel.icon())
 				.priority(7).panel(panel).build();
 			clientToolbar.addNavigation(navButton);
