@@ -127,6 +127,20 @@ def build(app, acct=None, item=None, slot_items=(), since_nid=0, now=None):
         r = E.by_id.get(w["id"]) or {}
         out["watch"].append({"id": w["id"], "name": (E.mapping.get(w["id"]) or {}).get("name") or f"Item {w['id']}",
                              "high": r.get("high"), "low": r.get("low"), "chg24h": r.get("chg24h"), "profit": r.get("profit")})
+    # Daily low and high cycles that passed their test, the open buy windows first.
+    try:
+        from . import cycles
+        cyc = cycles.refresh_timing({"items": [dict(r) for r in cycles.scan(D, E, cfg, "daily", now=now)["items"]]}, now)["items"]
+    except Exception:  # noqa: BLE001
+        cyc = []
+    keep = ("id", "name", "low", "gap", "block", "buyAt", "sellAt", "profit", "roi", "perCycle", "qty", "inBuy", "inSell",
+            "nextBuyIn", "nextSellIn", "confidence")
+    out["cycles"] = [dict({k: c.get(k) for k in keep}, wins=c["test"]["wins"], days=c["test"]["days"])
+                     for c in sorted(cyc, key=lambda c: (not c["inBuy"], c["nextBuyIn"]))[:12]]
+    if item and "item" in out:
+        hit = next((c for c in cyc if c["id"] == int(item)), None)
+        if hit:
+            out["item"]["cycle"] = dict({k: hit.get(k) for k in keep}, wins=hit["test"]["wins"], days=hit["test"]["days"])
     # Account.
     day0 = int(now - 86400)
     flips = [f for f in features.flip_rows(D, E) if not f["open"] and (f.get("sell_ts") or 0) >= day0

@@ -469,6 +469,7 @@ const PAGE_ICONS = {
   log: "M9 6h11 M9 12h11 M9 18h11 M4 6h.01 M4 12h.01 M4 18h.01",
   terminal: "M5 3v18 M3 7h4v8H3z M12 5v14 M10 9h4v6h-4z M19 3v16 M17 6h4v6h-4z",
   flips: "M7 4v14 M3 14l4 4 4-4 M17 20V6 M13 10l4-4 4 4",
+  cycles: "M2 12c2.5-6 5.5-6 8 0s5.5 6 8 0 M18 12c1-2.4 2.2-3.6 4-4 M6 18v3 M14 3v3",
   watch: "M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z",
   alerts: "M6 16v-5a6 6 0 0 1 12 0v5l2 2H4z M10 21h4",
   market: "M4 20V10 M10 20V4 M16 20v-8 M22 20H2",
@@ -484,7 +485,7 @@ const PAGE_ICONS = {
 };
 const PAGE_GROUPS = [
   ["Portfolio", [["statement", "Bank statement"], ["networth", "Net worth"], ["goals", "Goals and income"], ["portfolio", "Manual holdings"], ["log", "Flip log"]]],
-  ["Trade", [["terminal", "Terminal"], ["flips", "Flip finder"], ["watch", "Watchlist"], ["alerts", "Alerts"]]],
+  ["Trade", [["terminal", "Terminal"], ["flips", "Flip finder"], ["cycles", "Cycles"], ["watch", "Watchlist"], ["alerts", "Alerts"]]],
   ["Market", [["market", "Market"], ["movers", "Movers"], ["news", "News"]]],
   ["Research", [["forecast", "Forecast"], ["backtest", "Backtest"]]],
   ["Skilling and tools", [["money", "Money making"], ["alch", "High alch"], ["decant", "Decanting"], ["account", "Account"], ["settings", "Settings"]]],
@@ -2792,6 +2793,122 @@ window.addEventListener("resize", () => { clearTimeout(WS_RESIZE); WS_RESIZE = s
 
 $("#addWidget").onclick = openWidgetPicker;
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") { closePop(); $$(".modal").forEach((m) => m.remove()); } });
+
+// Cycles: buy in the hours (or weekday) an item is usually cheap, sell when it is usually dear --
+const CY = Object.assign({ kind: "daily", sort: "per", sel: null }, store.get("cy", {}));
+const WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+// The server works in UTC hours; show them on this computer's clock.
+function localHour(utcHour) { return new Date(Date.UTC(2000, 0, 1, ((utcHour % 24) + 24) % 24)).getHours(); }
+function hh(h) { return String(h).padStart(2, "0") + ":00"; }
+function cycWindow(r, which) {
+  if (r.kind === "weekly") return WEEKDAYS[which === "buy" ? r.low : (r.low + r.gap) % 7];
+  const start = which === "buy" ? r.low : r.low + r.gap, l = localHour(start);
+  return `${hh(l)} to ${hh((l + (r.block || 3)) % 24)}`;
+}
+function untilText(sec) {
+  if (sec <= 0) return "now";
+  const h = Math.floor(sec / 3600), m = Math.round((sec % 3600) / 60);
+  return h >= 48 ? `in ${Math.round(sec / 86400)} days` : h ? `in ${h}h ${m}m` : `in ${m}m`;
+}
+function cycNow(r) {
+  if (r.inBuy) return `<span class="st st-filled" title="The buy window is open">Buy now</span>`;
+  if (r.inSell) return `<span class="st st-canceled" title="The sell window is open">Sell now</span>`;
+  return `<span class="muted small">buy ${untilText(r.nextBuyIn)}</span>`;
+}
+function cycTested(r) {
+  const t = r.test, n = t.days ?? t.weeks, unit = r.kind === "weekly" ? "weeks" : "days";
+  return `<span title="Replayed on the latest ${n} ${unit} it was not fitted on: made money after tax ${t.wins} times, ${sgnPct(t.ret, 2)} on average, ${pct(t.edge, 2)} better than buying at random times.">won ${t.wins} of ${n} <span class="muted">${unit}</span></span>`;
+}
+async function cycTargets(r, after) {
+  const qty = r.qty || null;
+  await api("/api/targets", { method: "POST", body: { item_id: r.id, side: "buy", price: r.buyAt, qty, note: `${r.kind} cycle` } });
+  await api("/api/targets", { method: "POST", body: { item_id: r.id, side: "sell", price: r.sellAt, qty, note: `${r.kind} cycle` } });
+  toast("Targets set", `${r.name}: buy at ${gp(r.buyAt)}, sell at ${gp(r.sellAt)}. You'll get an alert when each is reached.`);
+  if (after) after();
+}
+// 24 bars (or 7) of how far the price usually sits from its day's (week's) average, with the
+// buy and sell windows marked and labeled.
+function cycleChart(res) {
+  const weekly = res.kind === "weekly", n = weekly ? 7 : 24;
+  const order = weekly ? [0, 1, 2, 3, 4, 5, 6] : Array.from({ length: 24 }, (_, i) => i).sort((a, b) => localHour(a) - localHour(b));
+  const vals = order.map((u) => (res.profile[u] == null ? null : Math.exp(res.profile[u]) - 1));
+  const buySet = new Set(), sellSet = new Set();
+  for (let k = 0; k < (weekly ? 1 : res.block); k++) { buySet.add((res.low + k) % n); sellSet.add((res.low + res.gap + k) % n); }
+  const W = 640, H = 190, padL = 40, padB = 26, padT = 22, bw = (W - padL - 8) / n;
+  const mx = Math.max(0.002, ...vals.filter((v) => v != null).map(Math.abs));
+  const y0 = padT + (H - padT - padB) / 2, sc = (H - padT - padB) / 2 / mx;
+  const bars = order.map((u, i) => {
+    const v = vals[i]; if (v == null) return "";
+    const x = padL + i * bw + 2, h = Math.abs(v) * sc, y = v >= 0 ? y0 - h : y0;
+    const cls = buySet.has(u) ? "cy-buy" : sellSet.has(u) ? "cy-sell" : "cy-bar";
+    const label = weekly ? WEEKDAYS[u] : hh(localHour(u));
+    return `<rect class="${cls}" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${(bw - 4).toFixed(1)}" height="${Math.max(1, h).toFixed(1)}" rx="2"><title>${label}: ${sgnPct(v, 2)} vs the ${weekly ? "week" : "day"}'s average</title></rect>`;
+  }).join("");
+  const ticks = order.map((u, i) => (weekly || i % 3 === 0) ? `<text x="${(padL + i * bw + bw / 2).toFixed(1)}" y="${H - 8}" text-anchor="middle">${weekly ? WEEKDAYS[u].slice(0, 3) : hh(localHour(u)).slice(0, 2)}</text>` : "").join("");
+  const mark = (set, txt, cls) => {
+    const idx = order.map((u, i) => (set.has(u) ? i : -1)).filter((i) => i >= 0);
+    if (!idx.length) return "";
+    const x = padL + (Math.min(...idx) + Math.max(...idx) + 1) / 2 * bw;
+    return `<text x="${x.toFixed(1)}" y="14" text-anchor="middle" class="${cls}">${txt}</text>`;
+  };
+  return `<svg class="chart cy-chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Typical price by ${weekly ? "weekday" : "hour"}">
+    <line class="grid" x1="${padL}" x2="${W - 8}" y1="${y0}" y2="${y0}"/>
+    <text x="${padL - 6}" y="${(y0 - mx * sc + 4).toFixed(1)}" text-anchor="end">${arrow(1)}${pct(mx, 1)}</text>
+    <text x="${padL - 6}" y="${(y0 + mx * sc + 4).toFixed(1)}" text-anchor="end">${arrow(-1)}${pct(mx, 1)}</text>
+    ${bars}${ticks}${mark(buySet, "Buy", "cy-buy-t")}${mark(sellSet, "Sell", "cy-sell-t")}</svg>`;
+}
+async function cycleDetail(box, id) {
+  box.innerHTML = `<div class="card"><div class="muted small">Loading...</div></div>`;
+  const d = await api("/api/cycles/item?id=" + id);
+  const part = (res, label) => {
+    if (!res.ok) return `<div class="card"><h3 style="margin-top:0">${label}</h3><div class="muted">${esc(res.reason)}.</div></div>`;
+    const t = res.test, n = t.days ?? t.weeks, unit = res.kind === "weekly" ? "weeks" : "days";
+    const verdict = res.passed ? `<span class="tag pump">Passed${res.confidence === "strong" ? ", strong" : ""}</span>` : `<span class="tag">Did not pass</span>`;
+    return `<div class="card"><div class="section-head"><h3 style="margin:0">${label} ${verdict}</h3>${res.passed ? `<button class="btn small primary" data-cyt="${res.kind}">Set buy and sell targets</button>` : ""}</div>
+      ${cycleChart(res)}
+      <div class="kv small" style="margin-top:8px">
+        <span class="k">Buy window</span><span><b>${esc(cycWindow(res, "buy"))}</b> around ${gp(res.buyAt)} <span class="muted">(instant-sell price there lately)</span></span>
+        <span class="k">Sell window</span><span><b>${esc(cycWindow(res, "sell"))}</b> around ${gp(res.sellAt)}</span>
+        <span class="k">Profit each after tax</span><span class="${signCls(res.profit)}">${res.profit == null ? "-" : signed(res.profit)} ${res.roi == null ? "" : `(${pct(res.roi, 2)})`}</span>
+        <span class="k">Per cycle</span><span>${res.perCycle ? short(res.perCycle) + ` <span class="muted">for ${gp(res.qty)} at your fill share, within the buy limit</span>` : "-"}</span>
+        <span class="k">Unseen ${unit}</span><span>made money ${t.wins} of ${n}, average ${sgnPct(t.ret, 2)}, ${sgnPct(t.edge, 2)} vs random timing</span>
+        <span class="k">Now</span><span>${cycNow(res)}${res.inSell ? "" : `<span class="muted">, sell ${untilText(res.nextSellIn)}</span>`}</span>
+      </div></div>`;
+  };
+  box.innerHTML = `<div class="section-head"><h3>${esc(d.name || "Item")}</h3><button class="btn small" data-term>Open in Terminal</button></div>
+    <div class="grid2">${part(d.daily, "Daily cycle")}${part(d.weekly, "Weekly cycle")}</div>`;
+  $("[data-term]", box).onclick = () => openTerminal(id);
+  $$("[data-cyt]", box).forEach((b) => (b.onclick = () => cycTargets(Object.assign({ id, name: d.name }, d[b.dataset.cyt]))));
+}
+renderers.cycles = async function (host) {
+  host.innerHTML = `<h2>Cycles</h2>
+    <p class="lede">Some items dip and recover at about the same time every day, or on the same weekdays. Each pattern here was found on older history and only listed if it also <b>made money after the 2% tax on the latest days it had not seen</b>, won most of them, and beat doing the same trade at random times. Buy with a patient offer in the buy window, sell in the sell window. Times are on your clock.</p>
+    <div class="chips" id="cyKind">${[["daily", "Daily (by hour)"], ["weekly", "Weekly (by weekday)"]].map(([k, l]) => `<button class="chip ${CY.kind === k ? "on" : ""}" data-k="${k}">${l}</button>`).join("")}
+      <span style="flex:1"></span><label class="field" style="margin:0"><select class="input" id="cySort"><option value="per">Most per cycle</option><option value="soon">Buy window soonest</option><option value="roi">Highest return</option></select></label></div>
+    <div id="cyNow"></div><div class="table-wrap" id="cyTable"><div class="muted small" style="padding:12px">Testing every liquid item...</div></div><div id="cyDetail" style="margin-top:8px"></div>`;
+  $("#cySort", host).value = CY.sort;
+  $$("#cyKind [data-k]", host).forEach((b) => (b.onclick = () => { CY.kind = b.dataset.k; store.set("cy", CY); renderers.cycles(host); }));
+  $("#cySort", host).onchange = (e) => { CY.sort = e.target.value; store.set("cy", CY); renderers.cycles(host); };
+  let d;
+  try { d = await api("/api/cycles?kind=" + CY.kind); } catch (e) { $("#cyTable", host).innerHTML = `<div class="notice">${esc(e.message)}</div>`; return; }
+  const rows = d.items.slice();
+  if (CY.sort === "soon") rows.sort((a, b) => (a.inBuy ? -1 : 0) - (b.inBuy ? -1 : 0) || a.nextBuyIn - b.nextBuyIn);
+  if (CY.sort === "roi") rows.sort((a, b) => b.roi - a.roi);
+  const open = rows.filter((r) => r.inBuy);
+  $("#cyNow", host).innerHTML = open.length ? `<div class="banner" style="margin:8px 0"><b>Buy window open now:</b> ${open.slice(0, 8).map((r) => `<a href="#" data-cyid="${r.id}">${esc(r.name)}</a> at ${gp(r.buyAt)}`).join(", ")}</div>` : "";
+  $("#cyTable", host).innerHTML = rows.length ? `<table>${thead([{ label: "Item" }, { label: "Buy window" }, { label: "Sell window" }, { label: "Buy at", num: 1 }, { label: "Sell at", num: 1 }, { label: "Profit each", num: 1, title: "After the GE tax" }, { label: "Return", num: 1 }, { label: "Per cycle", num: 1, title: "Profit each times what you'd likely fill in the buy window, within the buy limit" }, { label: "Tested", title: "On recent history the pattern was not fitted on" }, { label: "Now" }, { label: "" }], null)}<tbody>
+    ${rows.map((r) => `<tr data-cy="${r.id}" class="${CY.sel === r.id ? "sel" : ""}"><td>${itemCell(r, r.confidence === "strong" ? ` <span class="tag pump" title="Beat random timing clearly (t of 2 or more over 7+ unseen periods)">Strong</span>` : "")}</td>
+      <td>${esc(cycWindow(r, "buy"))}</td><td>${esc(cycWindow(r, "sell"))}</td><td class="num">${gp(r.buyAt)}</td><td class="num">${gp(r.sellAt)}</td>
+      <td class="num pos">${signed(r.profit)}</td><td class="num">${pct(r.roi, 2)}</td><td class="num"><b>${short(r.perCycle)}</b></td><td>${cycTested(r)}</td><td>${cycNow(r)}</td>
+      <td><button class="btn small" data-tgt="${r.id}" title="Alert me at the buy and sell prices">Targets</button></td></tr>`).join("")}</tbody></table>
+    <p class="small muted" style="padding:0 12px 10px">${d.items.length} of ${d.tested} liquid items passed. ${CY.kind === "daily" ? "Daily patterns use the last 30 days of hourly history and are re-tested every 30 minutes." : "Weekly patterns use up to a year of daily history (import more in Settings); days run midnight to midnight UTC."} Patterns can stop working, so treat these as odds, not promises.</p>`
+    : `<div class="empty">No ${CY.kind} cycle passed the test right now (${d.tested} items tested). ${CY.kind === "daily" ? "Daily cycles need at least 10 days of hourly history." : "Weekly cycles need about 12 weeks of daily history; import it in Settings."}</div>`;
+  const pickRow = (id) => { CY.sel = id; store.set("cy", CY); $$("tr[data-cy]", host).forEach((tr) => tr.classList.toggle("sel", +tr.dataset.cy === id)); cycleDetail($("#cyDetail", host), id).then(() => $("#cyDetail", host).scrollIntoView({ behavior: "smooth", block: "nearest" })); };
+  $$("tr[data-cy]", host).forEach((tr) => (tr.onclick = (e) => { if (!e.target.closest("button")) pickRow(+tr.dataset.cy); }));
+  $$("[data-tgt]", host).forEach((b) => (b.onclick = () => cycTargets(rows.find((r) => r.id === +b.dataset.tgt))));
+  $$("[data-cyid]", host).forEach((a) => (a.onclick = (e) => { e.preventDefault(); pickRow(+a.dataset.cyid); }));
+  if (CY.sel && rows.some((r) => r.id === CY.sel)) cycleDetail($("#cyDetail", host), CY.sel);
+};
 
 // Money making: recipes and item sets ---------------------------------------------
 const MM = Object.assign({ patient: true, skill: "all", hideRisky: true, q: "", setDir: "all", rates: {}, smithing: "" }, store.get("mm", {}));

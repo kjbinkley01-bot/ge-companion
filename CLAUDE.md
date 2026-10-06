@@ -63,7 +63,7 @@ A free alternative to GE Tracker premium, built only on public, read-only data.
   Side panel (display only, `BankstandingPanel`, tabs Offers, Item, Ideas, Wealth): the plugin
   reads GE slots and RuneLite item info on the client thread (`PanelState`), then one GET to
   `/api/plugin/panel` (`geco/panel.py`: header, prices and coach notes for slot items, item
-  detail with 24h spark, ideas for cash over free slots, watchlist, account, `costs` for the
+  detail with 24h spark and its daily cycle, ideas for cash over free slots, `cycles`, watchlist, account, `costs` for the
   bank tooltip, notifications since the last nid). Refreshes every 30 seconds, on offer
   changes, login and the GE item (varp TRADINGPOST_SEARCH, `followGeItem`), debounced; keeps
   the last answer 10 minutes marked stale, else falls back to RuneLite prices. `PanelHost`
@@ -114,6 +114,15 @@ A free alternative to GE Tracker premium, built only on public, read-only data.
   execution vs the hour's average prices. Tags for auto rows live in `trade_tags` keyed by
   (acct, item, buy_ts) so they survive `sync_flips`. Paper rules = backtest restricted to
   entries after the rule was saved.
+* `geco/cycles.py`: low and high cycles. Daily: per UTC hour log deviation from each day's
+  mean (days with 18+ hours), 3 hour low and high blocks picked on older days; replay on the
+  last third of days (min 4): patient buy at the block's avg `al`, sell at the next high
+  block's avg `ah`, after tax, against the same trade from every start hour (random timing).
+  Weekly: same on `d1` with weekdays (UTC days, 12+ weeks, last quarter held out). Passes if
+  it made money on unseen days, won 60%+, beat random timing by `MIN_EDGE` with t >= 1, beat
+  it on the fitting days too, and returns `MIN_ROI` at last week's block prices. `scan` caches
+  30 minutes; `refresh_timing` updates the open window fields. Endpoints `/api/cycles?kind=`
+  and `/api/cycles/item?id=`; the panel payload carries the top 12 daily ones and the item's.
 * `geco/targets.py`: price targets and sell ladders, checked after each price refresh.
 * `geco/guard.py`: manipulation score (sharp rise vs class, volume burst, thin market, spread,
   lopsided flow, above 90 day range).
@@ -187,6 +196,9 @@ v6: Legend workspaces (layouts of widgets with drag, resize, add and remove, col
 across layouts and windows, 8 templates), Legend chart (ranges and intervals, drawings,
 offers, cost and targets on the chart, Buy/Sell plan tickets), palette refined to the product
 images (#CCFF00 lime, #1a1b1e panels, teal header glow).
+v7: Windows background app and icons; RuneLite side panel with Offers, Item, Ideas (flips,
+cycles, watchlist) and Wealth tabs, bank cost tooltip and notifications; Cycles page (daily
+and weekly buy-low sell-high windows, tested on unseen days).
 Open questions to verify in game: whether a sell offer's `spent` is before or after tax
 (`account.sell_split` handles both), and how promptly collection box containers update.
 Hiscores response format verified against the live endpoint (Sep 2026).

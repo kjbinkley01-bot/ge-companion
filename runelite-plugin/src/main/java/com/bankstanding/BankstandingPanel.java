@@ -62,7 +62,8 @@ class BankstandingPanel extends PluginPanel
 	private final IconTextField search = new IconTextField();
 	private PanelState state = new PanelState();
 	private List<Object[]> results;
-	private boolean showWatchlist;
+	/** Ideas tab view: 0 flips, 1 cycles, 2 watchlist. */
+	private int ideasMode;
 
 	BankstandingPanel(PanelHost host)
 	{
@@ -540,6 +541,25 @@ class BankstandingPanel extends PluginPanel
 			}
 			item.add(Ui.wrap("Manipulation check " + Fmt.num(g, "score").intValue() + "/100: " + why, Ui.WARN, 190));
 		}
+		JsonObject cyc = Fmt.obj(d, "cycle");
+		if (cyc != null)
+		{
+			item.add(Ui.heading("Daily cycle"));
+			JPanel cc = Ui.card(null);
+			JPanel cs = Ui.stack(3);
+			int low = Fmt.num(cyc, "low").intValue(), gap = Fmt.num(cyc, "gap").intValue();
+			int block = Fmt.num(cyc, "block") == null ? 3 : Fmt.num(cyc, "block").intValue();
+			cs.add(Ui.kv("Buy " + localWindow(low, block), Ui.label(Fmt.gp(Fmt.num(cyc, "buyAt")), FontManager.getRunescapeSmallFont(), Ui.UP)));
+			cs.add(Ui.kv("Sell " + localWindow(low + gap, block), Ui.label(Fmt.gp(Fmt.num(cyc, "sellAt")), FontManager.getRunescapeSmallFont(), Ui.DOWN)));
+			cs.add(Ui.kv("Profit each", "+" + Fmt.gp(Fmt.num(cyc, "profit")) + " (" + Fmt.pct(Fmt.num(cyc, "roi"), 1) + ")"));
+			boolean inBuy = Fmt.bool(cyc, "inBuy"), inSell = Fmt.bool(cyc, "inSell");
+			cs.add(Ui.kv("Now", inBuy ? Ui.label("Buy window open", FontManager.getRunescapeSmallFont(), Ui.UP)
+				: inSell ? Ui.label("Sell window open", FontManager.getRunescapeSmallFont(), Ui.DOWN)
+				: Ui.label("Buy " + until(Fmt.num(cyc, "nextBuyIn")), FontManager.getRunescapeSmallFont(), Ui.TEXT)));
+			cs.add(Ui.kv("Tested", "won " + Fmt.num(cyc, "wins").intValue() + " of " + Fmt.num(cyc, "days").intValue() + " unseen days"));
+			cc.add(cs);
+			item.add(cc);
+		}
 		JsonArray news = Fmt.arr(d, "news");
 		if (news.size() > 0)
 		{
@@ -657,32 +677,37 @@ class BankstandingPanel extends PluginPanel
 	private void renderIdeas()
 	{
 		ideas.removeAll();
-		JPanel toggle = new JPanel(new GridLayout(1, 2, 4, 0));
+		JPanel toggle = new JPanel(new GridLayout(1, 3, 3, 0));
 		toggle.setOpaque(false);
-		JButton flips = smallButton("Flips", "Flips your cash can fund now");
-		JButton watch = smallButton("Watchlist", "Items you watch");
-		flips.setForeground(showWatchlist ? Ui.MUTED : Ui.TEXT);
-		watch.setForeground(showWatchlist ? Ui.TEXT : Ui.MUTED);
-		flips.addActionListener(e ->
+		String[][] modes = {{"Flips", "Flips your cash can fund now"},
+			{"Cycles", "Items that are usually cheap at one time of day and dear at another"},
+			{"Watch", "Items you watch"}};
+		for (int i = 0; i < modes.length; i++)
 		{
-			showWatchlist = false;
-			renderIdeas();
-		});
-		watch.addActionListener(e ->
-		{
-			showWatchlist = true;
-			renderIdeas();
-		});
-		toggle.add(flips);
-		toggle.add(watch);
+			int m = i;
+			JButton b = smallButton(modes[i][0], modes[i][1]);
+			b.setForeground(ideasMode == i ? Ui.TEXT : Ui.MUTED);
+			b.addActionListener(e ->
+			{
+				ideasMode = m;
+				renderIdeas();
+			});
+			toggle.add(b);
+		}
 		ideas.add(toggle);
 		if (app() == null)
 		{
-			ideas.add(note("Flip ideas and your watchlist need the Bankstanding app running on this PC."));
+			ideas.add(note("Flip ideas, cycles and your watchlist need the Bankstanding app running on this PC."));
 			done(ideas);
 			return;
 		}
-		if (showWatchlist)
+		if (ideasMode == 1)
+		{
+			renderCycles();
+			done(ideas);
+			return;
+		}
+		if (ideasMode == 2)
 		{
 			JsonArray w = Fmt.arr(app(), "watch");
 			if (w.size() == 0)
@@ -764,9 +789,72 @@ class BankstandingPanel extends PluginPanel
 	/** Shows the watchlist on the Ideas tab. */
 	void ideasWatchlist()
 	{
-		showWatchlist = true;
+		ideasMode = 2;
 		renderIdeas();
 		showTab(2);
+	}
+
+	/** Shows the cycles on the Ideas tab. */
+	void ideasCycles()
+	{
+		ideasMode = 1;
+		renderIdeas();
+		showTab(2);
+	}
+
+	/** "02:00-05:00" on this computer's clock, from a UTC start hour and a length in hours. */
+	static String localWindow(int utcStart, int hours)
+	{
+		java.time.ZonedDateTime t = java.time.ZonedDateTime.of(2000, 1, 3, ((utcStart % 24) + 24) % 24, 0, 0, 0, java.time.ZoneOffset.UTC)
+			.withZoneSameInstant(java.time.ZoneId.systemDefault());
+		int a = t.getHour(), b = (a + hours) % 24;
+		return String.format(Locale.US, "%02d:00-%02d:00", a, b);
+	}
+
+	private static String until(Double seconds)
+	{
+		return seconds == null ? "" : seconds <= 0 ? "now" : "in " + Fmt.duration(seconds);
+	}
+
+	private void renderCycles()
+	{
+		ideas.add(Ui.wrap("Items that are usually cheapest in one window of the day and dearest in another. Each one paid after tax on recent days it was not fitted on, and beat random timing. Times are on your clock.", Ui.MUTED, 200));
+		JsonArray rows = Fmt.arr(app(), "cycles");
+		if (rows.size() == 0)
+		{
+			ideas.add(note("No daily cycle passed its test right now. Cycles need at least 10 days of hourly history in the app."));
+		}
+		for (JsonElement e : rows)
+		{
+			JsonObject r = e.getAsJsonObject();
+			int id = Fmt.num(r, "id").intValue();
+			JPanel row = Ui.card(BorderFactory.createEmptyBorder(5, 6, 5, 7));
+			JPanel s = Ui.stack(1);
+			JPanel top = new JPanel(new BorderLayout(4, 0));
+			top.setOpaque(false);
+			top.add(Ui.bold(Fmt.str(r, "name")), BorderLayout.CENTER);
+			boolean inBuy = Fmt.bool(r, "inBuy"), inSell = Fmt.bool(r, "inSell");
+			JLabel when = inBuy ? Ui.label("Buy now", FontManager.getRunescapeSmallFont(), Ui.UP)
+				: inSell ? Ui.label("Sell now", FontManager.getRunescapeSmallFont(), Ui.DOWN)
+				: Ui.small("buy " + until(Fmt.num(r, "nextBuyIn")));
+			top.add(when, BorderLayout.EAST);
+			s.add(top);
+			int low = Fmt.num(r, "low").intValue(), gap = Fmt.num(r, "gap").intValue();
+			int block = Fmt.num(r, "block") == null ? 3 : Fmt.num(r, "block").intValue();
+			s.add(Ui.kv("Buy " + localWindow(low, block), Ui.label(Fmt.gp(Fmt.num(r, "buyAt")), FontManager.getRunescapeSmallFont(), Ui.UP)));
+			s.add(Ui.kv("Sell " + localWindow(low + gap, block), Ui.label(Fmt.gp(Fmt.num(r, "sellAt")), FontManager.getRunescapeSmallFont(), Ui.DOWN)));
+			JPanel l3 = new JPanel(new BorderLayout(4, 0));
+			l3.setOpaque(false);
+			l3.add(Ui.small("+" + Fmt.shortGp(Fmt.num(r, "profit")) + " each, " + Fmt.pct(Fmt.num(r, "roi"), 1)), BorderLayout.WEST);
+			JLabel won = Ui.small("won " + Fmt.num(r, "wins").intValue() + "/" + Fmt.num(r, "days").intValue());
+			won.setToolTipText("Made money after tax on this many of the latest days the pattern was not fitted on");
+			l3.add(won, BorderLayout.EAST);
+			s.add(l3);
+			row.add(s, BorderLayout.CENTER);
+			Ui.clickable(row, () -> pick(id));
+			row.setToolTipText("About " + Fmt.shortGp(Fmt.num(r, "perCycle")) + " per cycle at your fill rate. Show on the Item tab.");
+			ideas.add(row);
+		}
 	}
 
 	private void pick(int id)

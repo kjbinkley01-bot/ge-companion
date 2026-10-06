@@ -845,3 +845,12 @@ svg.tchart .lvl.cost .lvl-ptxt, svg.tchart .lvl.line .lvl-ptxt { fill: var(--tex
 @container (max-width: 470px) { .wd-table .opt { display: none; } .wd-table td.sp svg { width: 64px; } }
 @container (max-width: 340px) { .wd-table .sp, .wd-table .sp-h { display: none; } }
 .ticket .input { background: var(--bg); }
+/* Cycles: the buy and sell windows on the typical day (or week) chart */
+svg.cy-chart { width: 100%; height: auto; }
+svg.cy-chart .cy-bar { fill: var(--muted); opacity: .45; }
+svg.cy-chart .cy-buy { fill: var(--pos); }
+svg.cy-chart .cy-sell { fill: var(--neg); }
+svg.cy-chart .cy-buy-t { fill: var(--pos); font-weight: 700; font-size: 12px; }
+svg.cy-chart .cy-sell-t { fill: var(--neg); font-weight: 700; font-size: 12px; }
+tr[data-cy] { cursor: pointer; }
+tr[data-cy].sel td { background: var(--accent-bg); }
