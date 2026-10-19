@@ -2946,10 +2946,20 @@ function taskCard(t, i) {
       <div class="small muted">The requirement for ${esc(t.why)} can be boosted, so no training needed.</div></div></div>`;
   }
   if (t.unknown) return `<div class="pl-task"><div class="pl-num">${i}</div><div class="pl-body"><b>${esc(t.title)}</b><div class="small muted">Your ${esc(t.skill)} level isn't known yet: log in with the plugin running.</div></div></div>`;
-  const opts = (t.options || []).filter((o) => o.method !== t.method).slice(0, 3).map((o) => `${esc(o.method)} (${short(o.xph)}/h${o.gpPerXp ? `, ${o.gpPerXp > 0 ? gp(o.gpPerXp) + " gp/xp" : "profit"}` : ""})`).join(", ");
+  const cost = (g) => (g == null ? " · cost not listed" : g > 0.05 ? ` · about ${gp(Math.round(g * 100) / 100)} gp/xp` : g < -0.05 ? " · makes money" : " · free");
+  const wl = (u, label) => (u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(label)}</a>` : esc(label));
+  const segs = (t.segments || []).map((sg) => `<div class="pl-st"><span class="pl-lv">${sg.from} to ${sg.to}</span>
+      <div><b>${sg.method ? wl(sg.url, sg.method) : "No method found here"}</b> <span class="muted">· ${gp(sg.xp)} XP${sg.xph ? ` at about ${short(sg.xph)} XP/h` : ""}${cost(sg.gpPerXp)}</span>
+      ${sg.summary ? `<div class="muted">${esc(sg.summary)}</div>` : ""}
+      ${sg.notes && sg.notes.length ? `<div class="muted">${sg.notes.map(esc).join(" · ")}</div>` : ""}
+      ${sg.items && sg.items.length ? `<details><summary class="muted">${sg.items.length} items in the Wiki's setup</summary>${sg.items.map(esc).join(", ")}</details>` : ""}</div>
+      <span class="pl-time">${hrs(sg.hours)}</span></div>`).join("");
+  const opts = (t.options || []).slice(0, 5).map((o) => `<li>${wl(o.url, o.method)} <span class="muted">(${short(o.xph)}/h${o.gpPerXp != null && o.gpPerXp > 0.05 ? `, ${gp(Math.round(o.gpPerXp * 100) / 100)} gp/xp` : ""}${o.minLevel > t.from ? `, from level ${o.minLevel}` : ""})</span>${o.needs && o.needs.length ? ` <span class="warn-txt">needs ${esc(o.needs.join(", "))}</span>` : ""}</li>`).join("");
+  const src = t.rateSource === "yours" ? "your measured XP rate" : t.rateSource === "wiki" ? `the Wiki's ${esc(t.skill)} training guide` : "the Wiki's guide and the built in table";
   return `<div class="pl-task pl-t-skill"><div class="pl-num">${i}</div><div class="pl-body"><div class="pl-top"><b>${esc(t.title)}</b> <span class="tag">${esc(t.skill)}</span><span class="pl-time">${hrs(t.hours)}</span></div>
-    <div class="small">${esc(t.method || "No method in the table yet")} <span class="muted">· ${gp(t.xp)} XP at about ${short(t.xph)} XP/h ${t.rateSource === "yours" ? "(your measured rate)" : "(typical rate)"}${t.gp ? ` · costs about ${short(t.gp)}` : t.gp === 0 ? " · free" : ""}</span></div>
-    <div class="small muted">Needed for ${esc(t.why)}.${opts ? ` Other options: ${opts}.` : ""}</div></div></div>`;
+    <div class="small muted">Needed for ${esc(t.why)} · ${gp(t.xp)} XP${t.gp ? ` · costs about ${short(t.gp)}` : t.gp === 0 ? " · free" : t.gp < 0 ? " · makes money" : ""} · rates from ${src}</div>
+    <div class="small pl-segs">${segs}</div>
+    ${opts ? `<details class="small"><summary class="muted">Other ways to train</summary><ul class="pl-opts">${opts}</ul></details>` : ""}</div></div>`;
 }
 let PL_LAST = null;
 function p_pace_note() { const p = PL_LAST && PL_LAST.pace; return p && p.n >= 2 ? `; scaled by your pace (x${p.factor.toFixed(2)} from ${p.n} quests)` : ""; }

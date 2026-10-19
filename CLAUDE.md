@@ -85,8 +85,21 @@ A free alternative to GE Tracker premium, built only on public, read-only data.
   regression of log minutes on quick guide counts (steps, teleports, fights, chats, words,
   items, difficulty), clamped to the rating's range; pace = median of active time (sessions)
   over estimate for quests the plugin saw start and finish (2+, clipped 0.4 to 2.5).
-* `geco/training.py`: training methods per skill (rough XP/h, cost spec priced live), temporary
-  boosts, measured XP/h from `xp_log`, `plan_skill` (fastest or cheapest).
+* `geco/skillguides.py`: training methods and boosts from the Wiki's members training guides
+  (one bulk request for all guides, one for the "Temporary skill boost" subpages, weekly with
+  the quests; `geco/skillguides_snapshot.json` ships a parsed copy). `expand` works out
+  `{{Var}}`, `#vardefine`/`#var` (in page order), `#expr`, `formatnum` and `{{GEP}}` prices
+  (from the GE at fetch time) so table cells have numbers; other templates give up their
+  parameter text. A method is a "Levels A-B: Name" section: level range, XP/h curve from a
+  table with a level column (else rates stated in the text), the Wiki's GP/XP (profit per XP,
+  stored as cost), inventory, summary and section link. Requirements: only firm wording
+  ("requires", "must have completed", "to access") locks a method; a place, teleport or gear
+  among several becomes a note. Boosts: visible ones with a fixed size, `boost_at` scales
+  percentage boosts by level. Farming stays on the training table (its guide counts XP per run).
+* `geco/training.py`: `plan_skill` splits a goal into stretches, each with the best method the
+  account can use at that level (Wiki methods first, the built in table for gaps and live cost),
+  lists locked methods with what they need, and uses measured XP/h from `xp_log` when known.
+  `best_boost` picks the cheapest GE sold visible boost that covers the gap.
 * `geco/access.py`: curated boss and raid access (quests, levels, other), linked to the Wiki.
 * `geco/planner.py`: goal planner (quest, grandmasters, boss, skill). Quest closure, highest
   level per skill, QP filler by minutes per QP among quests already doable, order by
@@ -224,8 +237,8 @@ v7: Windows background app and icons; RuneLite side panel with Offers, Item, Ide
 cycles, watchlist) and Wealth tabs, bank cost tooltip and notifications; Cycles page (daily
 and weekly buy-low sell-high windows, tested on unseen days).
 v8: quest and goal planner (Wiki quest data, guide based time estimates scaled to your pace,
-boss access, skill training and boosts, ordered plan, shopping list), plugin quest and level
-events, panel Goal tab.
+boss access, skill training and boosts from the Wiki's training guides, ordered plan, shopping
+list), plugin quest and level events, panel Goal tab.
 Open questions to verify in game: whether a sell offer's `spent` is before or after tax
 (`account.sell_split` handles both), how promptly collection box containers update, and whether every `Quest` enum name matches
 the Wiki title (`quests.norm` covers "The" and "(quest)").

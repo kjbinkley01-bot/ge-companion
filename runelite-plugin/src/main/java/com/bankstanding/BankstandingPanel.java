@@ -1136,7 +1136,22 @@ class BankstandingPanel extends PluginPanel
 		}
 		else
 		{
-			s.add(Ui.wrap(Fmt.str(t, "method") == null ? "No method in the table for this level yet" : Fmt.str(t, "method"), Ui.TEXT, 190));
+			JsonArray segs = t.has("segments") && t.get("segments").isJsonArray() ? t.getAsJsonArray("segments") : new JsonArray();
+			if (segs.size() > 1)
+			{
+				// The plan switches method as levels unlock better ones.
+				for (JsonElement e : segs)
+				{
+					JsonObject sg = e.getAsJsonObject();
+					Double r = Fmt.num(sg, "xph");
+					s.add(Ui.wrap(Fmt.str(sg, "from") + " to " + Fmt.str(sg, "to") + ": " + Fmt.str(sg, "method")
+						+ (r != null ? ", " + Fmt.shortGp(r) + "/h" : ""), Ui.TEXT, 190));
+				}
+			}
+			else
+			{
+				s.add(Ui.wrap(Fmt.str(t, "method") == null ? "No training method found for this level yet" : Fmt.str(t, "method"), Ui.TEXT, 190));
+			}
 			Double xph = Fmt.num(t, "xph");
 			if (xph != null)
 			{

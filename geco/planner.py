@@ -13,7 +13,7 @@ Display only: nothing here touches the game.
 """
 import time
 
-from . import access, account, questtime, training
+from . import access, account, questtime, skillguides, training
 from .quests import load, norm
 
 SKILL_ORDER = ["Attack", "Strength", "Defence", "Ranged", "Prayer", "Magic", "Runecraft", "Construction",
@@ -106,9 +106,14 @@ def build(db, engine, cfg, goal, acct=None, mode="fastest", now=None):
     sessions = db.q("SELECT start, last FROM sessions WHERE acct=?", (acct,)) if acct else []
     pace = questtime.pace(db, acct, Q, sessions) if acct else {"factor": 1.0, "n": 0}
     measured = training.measured_rates(db, acct, now=now) if acct else {}
+    guides = skillguides.load(db)
 
     def done(n):
         return _state(prog, n) == 2
+
+    def quest_state(n):
+        """0, 1 or 2 when the plugin has reported quests, else None (unknown, so nothing is locked)."""
+        return (_state(prog, n) or 0) if prog["quests"] else None
 
     tquests, tskills, other, label = _targets(goal, Q)
 
@@ -208,14 +213,15 @@ def build(db, engine, cfg, goal, acct=None, mode="fastest", now=None):
         if lv >= d["level"]:
             continue
         gap = d["level"] - lv
-        boost = training.best_boost(s, gap) if d["boostable"] else None
+        boost = training.best_boost(s, gap, lv, price, guides) if d["boostable"] else None
         if boost:
             skill_tasks[s] = {"type": "boost", "skill": s, "from": lv, "target": d["level"], "boost": boost[0],
                               "amount": boost[1], "item": boost[2], "why": d["why"], "hours": 0.0,
                               "gp": price(boost[2], "buy") if boost[2] else None,
                               "title": f"Boost {s} {lv} to {d['level']} with a {boost[0].lower()} (+{boost[1]})"}
             continue
-        p = training.plan_skill(s, lv, xp, d["level"], price, mode, measured.get(s))
+        p = training.plan_skill(s, lv, xp, d["level"], price, mode, measured.get(s), guides=guides, levels=levels,
+                                quest_state=quest_state)
         if p:
             p.update(type="skill", why=d["why"], title=f"Train {s} {lv} to {d['level']}")
             skill_tasks[s] = p

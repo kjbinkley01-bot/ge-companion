@@ -1,12 +1,16 @@
-"""Skill training: methods with typical XP rates, their cost priced live from the GE, temporary
-boosts, and your own measured XP rates from the plugin's XP log.
+"""Skill training: which method to use at each level, how long it takes and what it costs.
 
-The rates are rough figures in the spirit of the OSRS Wiki's training guides (rates vary a lot
-with gear, diaries and attention), so each method shows "about". Once you have trained a skill
-with the plugin running, your measured rate replaces the table's.
+Methods come from the OSRS Wiki's training guides (see skillguides): level ranges, XP rates by
+level where the guide has a table, cost per XP from the guide's own price formulas, and the
+quests or levels a method needs. A plan switches method as levels unlock better ones and skips
+methods the account cannot use yet (listing them with what they need). The small table below
+fills gaps the guides leave (no rate stated, or no method at a level) and prices a few methods
+live. Once you have trained a skill with the plugin running, your measured rate replaces both.
 """
+import re
 import time
 
+from . import skillguides
 from .skills import xp_for_level
 
 # skill: [(method, min level, XP/h at that level, XP/h near 99, attention, cost spec or None)]
@@ -145,40 +149,175 @@ def measured_rates(db, acct, days=30, now=None):
     return out
 
 
-def plan_skill(skill, level, xp, target, price, mode="fastest", measured=None, members=True):
-    """How to get `skill` from (level, xp) to `target`: the method, hours and gp."""
-    need = xp_for_level(target) - (xp if xp is not None else xp_for_level(level))
+GATHER = {"Agility", "Thieving", "Hunter", "Mining", "Fishing", "Woodcutting", "Slayer", "Attack", "Strength",
+          "Defence", "Hitpoints", "Sailing"}
+
+
+GENERIC = {"course", "courses", "rooftop", "agility", "training", "trees", "tree", "runes", "rune", "with", "from",
+           "making", "crafting", "smithing", "cooking", "fishing", "mining", "level", "levels", "high"}
+
+
+def _words(name):
+    return {w for w in re.findall(r"[a-z]+", (name or "").lower()) if len(w) > 3 and w not in GENERIC}
+
+
+def candidates(skill, guides=None):
+    """Every method for a skill: the Wiki's, then the table's for anything the Wiki lacks."""
+    out = []
+    for m in (guides or {}).get("methods", {}).get(skill, []):
+        out.append({"name": m["name"], "lo": m["lo"], "hi": m["hi"], "curve": m.get("curve") or [],
+                    "typical": m.get("typical"), "gpPerXp": m.get("gpPerXp"), "req": m.get("req") or {},
+                    "items": m.get("items") or [], "summary": m.get("summary") or "", "url": m.get("url"),
+                    "source": "wiki", "fastest": m.get("fastest")})
+    for t in METHODS.get(skill, []):
+        twin = next((c for c in out if c["source"] == "wiki" and _words(c["name"]) & _words(t[0])), None)
+        if twin:
+            twin["spec"] = t  # live cost for a Wiki method the table also knows
+            continue
+        out.append({"name": t[0], "lo": t[1], "hi": 99, "curve": [], "typical": None, "gpPerXp": None, "req": {},
+                    "items": [], "summary": "", "url": None, "source": "table", "spec": t, "attention": t[4]})
+    return out
+
+
+def method_rate(c, level):
+    """XP/h of a candidate at a level: the best row of its table you can do, else its stated rate."""
+    if c["curve"]:
+        ok = [r for lv, r in c["curve"] if lv <= level]
+        return max(ok) if ok else c["curve"][0][1]
+    if c["typical"]:
+        return c["typical"]
+    if c.get("spec"):
+        return rate_at(c["spec"], level)
+    return None
+
+
+def method_cost(c, skill, price):
+    """gp per XP: live from the table's recipe when known, else the Wiki's figure (GE prices when
+    the guide was read), else 0 for gathering skills, else None."""
+    if c.get("spec") and c["spec"][5]:
+        g = gp_per_xp(c["spec"], price)
+        if g is not None:
+            return g
+    if c.get("gpPerXp") is not None:
+        return c["gpPerXp"]
+    return 0.0 if skill in GATHER else None
+
+
+def locked(c, levels, quest_state):
+    """What a candidate still needs on this account: [text], empty when usable."""
+    need = []
+    for q in (c.get("req") or {}).get("quests", []):
+        st = quest_state(q["quest"]) if quest_state else None
+        if st is None:
+            continue  # unknown account: do not hide methods
+        if st < (1 if q.get("partial") else 2):
+            need.append(("Start " if q.get("partial") else "") + q["quest"])
+    for sk, lv in ((c.get("req") or {}).get("skills") or {}).items():
+        have = (levels.get(sk) or (None,))[0]
+        if have is not None and have < lv:
+            need.append(f"{lv} {sk}")
+    return need
+
+
+def plan_skill(skill, level, xp, target, price, mode="fastest", measured=None, members=True,
+               guides=None, levels=None, quest_state=None):
+    """How to get `skill` from (level, xp) to `target`: one or more stretches, each with the best
+    method you can use there, plus hours and gp."""
+    start_xp = xp if xp is not None else xp_for_level(level)
+    need = xp_for_level(target) - start_xp
     if need <= 0:
         return None
-    options = []
-    for m in METHODS.get(skill, []):
-        if m[1] > level:
+    levels = levels or {}
+    cands = candidates(skill, guides)
+    for c in cands:
+        c["needs"] = locked(c, levels, quest_state)
+        c["cost"] = method_cost(c, skill, price)
+
+    def pick(lv):
+        ok = [c for c in cands if c["lo"] <= lv and not c["needs"] and method_rate(c, lv)]
+        if not ok:
+            return None
+        # A guide's level range is where it recommends the method; past it, prefer others.
+        score = {id(c): method_rate(c, lv) * (1.0 if lv <= c["hi"] else 0.85) for c in ok}
+        best = max(ok, key=lambda c: score[id(c)])
+        if mode == "cheapest":
+            cheap = [c for c in ok if score[id(c)] >= score[id(best)] * 0.4 and c["cost"] is not None]
+            if cheap:
+                best = min(cheap, key=lambda c: (round(c["cost"], 1), -score[id(c)]))
+        return best
+
+    segs = []
+    for lv in range(level, target):
+        lo_xp = max(start_xp, xp_for_level(lv))
+        part = xp_for_level(lv + 1) - lo_xp
+        if part <= 0:
             continue
-        mid = (level + target) / 2
-        r = rate_at(m, mid)
-        g = gp_per_xp(m, price)
-        options.append({"method": m[0], "xph": r, "gpPerXp": g, "attention": m[4], "minLevel": m[1]})
-    if not options:
+        c = pick(lv)
+        rate = method_rate(c, lv) if c else None
+        if segs and segs[-1]["c"] is c:
+            sg = segs[-1]
+            sg["to"] = lv + 1
+            sg["xp"] += part
+            sg["hours"] = sg["hours"] + part / rate if rate and sg["hours"] is not None else None
+        else:
+            segs.append({"c": c, "from": lv, "to": lv + 1, "xp": part, "hours": part / rate if rate else None})
+    if not any(sg["c"] for sg in segs):
         return {"skill": skill, "from": level, "to": target, "xp": need, "method": None, "hours": None, "gp": None,
-                "note": "No training method in the table for this level yet"}
-    fastest = max(options, key=lambda o: o["xph"])
-    if mode == "cheapest":
-        ok = [o for o in options if o["xph"] >= fastest["xph"] * 0.4 and o["gpPerXp"] is not None]
-        pick = min(ok, key=lambda o: o["gpPerXp"]) if ok else fastest
-    else:
-        pick = fastest
-    xph = pick["xph"]
-    source = "table"
+                "segments": [], "options": [], "note": "No training method found for this level yet"}
+    out_segs = []
+    for sg in segs:
+        c = sg["c"]
+        cost = c["cost"] if c else None
+        out_segs.append({"method": c["name"] if c else None, "from": sg["from"], "to": sg["to"], "xp": sg["xp"],
+                         "hours": sg["hours"], "xph": sg["xp"] / sg["hours"] if sg["hours"] else None,
+                         "gp": sg["xp"] * cost if cost is not None else None, "gpPerXp": cost,
+                         "url": c.get("url") if c else None, "items": (c.get("items") or [])[:12] if c else [],
+                         "summary": c.get("summary") if c else "", "source": c["source"] if c else None,
+                         "notes": ((c.get("req") or {}).get("notes") or [])[:3] if c else []})
+    hours = sum(sg["hours"] for sg in out_segs if sg["hours"]) if all(sg["hours"] for sg in out_segs) else None
+    source = "wiki" if all(sg["source"] == "wiki" for sg in out_segs) else "table"
     if measured and measured.get("xph") and measured["xph"] > 1000:
-        xph, source = measured["xph"], "yours"
-    hours = need / xph
-    gp = need * pick["gpPerXp"] if pick["gpPerXp"] is not None else None
-    return {"skill": skill, "from": level, "to": target, "xp": need, "method": pick["method"], "xph": xph,
-            "rateSource": source, "hours": hours, "gp": gp, "gpPerXp": pick["gpPerXp"], "attention": pick["attention"],
-            "options": sorted(options, key=lambda o: -o["xph"])}
+        scale = (need / measured["xph"]) / hours if hours else None
+        hours = need / measured["xph"]
+        for sg in out_segs:
+            if scale and sg["hours"]:
+                sg["hours"] *= scale
+                sg["xph"] = sg["xp"] / sg["hours"]
+        source = "yours"
+    costs = [sg["gp"] for sg in out_segs]
+    gp = sum(costs) if all(g is not None for g in costs) else None
+    first = out_segs[0]
+    opts = []
+    for c in cands:
+        r = method_rate(c, max(level, c["lo"]))
+        if not r:
+            continue
+        opts.append({"method": c["name"], "xph": r, "gpPerXp": c["cost"], "minLevel": c["lo"], "maxLevel": c["hi"],
+                     "needs": c["needs"], "url": c.get("url"), "source": c["source"],
+                     "usable": c["lo"] <= level and not c["needs"]})
+    used = {sg["method"] for sg in out_segs}
+    opts = [o for o in opts if o["method"] not in used and o["minLevel"] < target]
+    opts.sort(key=lambda o: (not o["usable"], -o["xph"]))
+    return {"skill": skill, "from": level, "to": target, "xp": need, "method": first["method"],
+            "xph": need / hours if hours else None, "rateSource": source, "hours": hours, "gp": gp,
+            "gpPerXp": gp / need if gp is not None else None, "attention": None,
+            "segments": out_segs, "options": opts[:6], "url": first["url"]}
 
 
-def best_boost(skill, gap):
-    """The smallest boost that covers a gap of `gap` levels, or None."""
+def best_boost(skill, gap, level=None, price=None, guides=None):
+    """(boost, levels, item to buy) for the cheapest visible boost that covers `gap` levels, from
+    the Wiki's boost tables (items sold on the GE, nothing that needs an unlock), else the table."""
+    if guides and price:
+        fits = []
+        for b in (guides.get("boosts") or {}).get(skill, []):
+            amount = skillguides.boost_at(b, level or 1)
+            if amount < gap or re.search(r"(?i)\brequires?\b|cannot be|untradeable", b.get("note") or ""):
+                continue
+            p = price(b["item"], "buy")
+            if p:
+                fits.append((amount, p, b["item"]))
+        if fits:
+            amount, p, item = min(fits, key=lambda f: (f[1], f[0]))
+            return (item, amount, item)
     fits = [b for b in BOOSTS.get(skill, []) if b[1] >= gap]
     return min(fits, key=lambda b: b[1]) if fits else None

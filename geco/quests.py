@@ -84,6 +84,7 @@ def plain(s):
     s = re.sub(r"\{\{[^{}]*\}\}", "", s)
     s = re.sub(r"<[^>]+>", "", s)
     s = re.sub(r"'''?", "", s)
+    s = re.sub("[\u2013\u2014]", "-", s)  # the app writes no en or em dashes
     return re.sub(r"\s+", " ", s).strip(" *:")
 
 

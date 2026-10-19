@@ -269,5 +269,132 @@ class TrainingTests(unittest.TestCase):
         self.assertIsNone(training.best_boost("Agility", 9))
 
 
+
+GUIDE = """{{External|rs}}
+Intro text about training.
+
+==Fastest experience==
+===Levels 20\u201347: Brimhaven Agility Arena===
+Players can expect around 45,000\u201350,000 experience per hour here.
+
+===Levels 47\u201362: Wilderness Agility Course===
+{{Inventory|align=right
+|Knife |Summer pie |Stamina potion(4)
+}}
+Players can gain around 50,000\u201360,000 experience per hour.
+
+===Levels 62\u201399: Hallowed Sepulchre===
+To access the Hallowed Sepulchre, players must have completed [[Sins of the Father]].
+{{Var|base|1000}}
+{| class="wikitable"
+! {{SCP|Agility}} level !! XP/hour
+|-
+| 62 || {{formatnum:{{#expr:{{#var:base}}*60}}}}
+|-
+| 72 || 75,000
+|-
+| 82 || -1
+|}
+
+==Other methods==
+===Levels 40\u201399: Rooftop course===
+This area requires partial completion of [[Regicide]]; it is optional. Around 40k xp/hr.
+
+==References==
+{{Reflist}}
+"""
+
+BOOSTS = """{| class="wikitable"
+! colspan="2" |Boost
+!Level<br/>increase
+!Visibility
+!Other info
+|-
+|{{plinkt|Agility potion}}
+|3
+|Visible
+|{{NA}}
+|-
+|{{plinkt|Spicy stew}}
+|±0-5
+|Visible
+|Random
+|-
+|{{plinkt|Super attack}}
+|5-19
+|Visible
+|
+|-
+|{{plinkt|Hidden thing}}
+|4
+|Invisible
+|
+|}"""
+
+
+class SkillGuideTests(unittest.TestCase):
+    def setUp(self):
+        from geco import skillguides
+        self.G = skillguides
+        self.names = {quests.norm(n): n for n in ["Sins of the Father", "Regicide"]}
+
+    def test_expand(self):
+        out = self.G.expand("{{#vardefine:a|{{#expr:{{GEP|Rope}}*2}}}}{{Coins|{{#var:a}}/4}} {{SCP|Magic|70}}",
+                            lambda n: 10)
+        self.assertEqual(out, "5 {{SCP|Magic|70}}")
+        self.assertEqual(self.G._expr("2780*50"), 139000)
+        self.assertEqual(self.G._expr("(10-4)/3 round 1"), 2)
+
+    def test_parse_guide(self):
+        ms = {m["name"]: m for m in self.G.parse_guide("Agility", "Agility training", GUIDE, self.names)}
+        self.assertEqual(set(ms), {"Brimhaven Agility Arena", "Wilderness Agility Course", "Hallowed Sepulchre",
+                                   "Rooftop course"})
+        b = ms["Brimhaven Agility Arena"]
+        self.assertEqual((b["lo"], b["hi"], b["typical"]), (20, 47, 47500))
+        self.assertTrue(b["fastest"])
+        self.assertIn("Summer pie", ms["Wilderness Agility Course"]["items"])
+        h = ms["Hallowed Sepulchre"]
+        self.assertEqual(h["curve"], [[62, 60000], [72, 75000]])  # the -1 row is not a rate
+        self.assertEqual(h["req"]["quests"], [{"quest": "Sins of the Father", "partial": False}])
+        self.assertIn("%E2%80%93", h["url"])  # the Wiki's anchor keeps its dash
+        r = ms["Rooftop course"]
+        self.assertEqual(r["req"]["quests"], [])  # one place among several, so only a note
+        self.assertEqual(r["typical"], 40000)
+
+    def test_parse_boosts(self):
+        b = {x["item"]: x for x in self.G.parse_boosts("Agility", BOOSTS)}
+        self.assertEqual(set(b), {"Agility potion", "Super attack"})
+        self.assertEqual(self.G.boost_at(b["Super attack"], 1), 5)
+        self.assertEqual(self.G.boost_at(b["Super attack"], 99), 19)
+
+    def test_plan_switches_and_skips_locked(self):
+        guides = {"methods": {"Agility": self.G.parse_guide("Agility", "Agility training", GUIDE, self.names)},
+                  "boosts": {}}
+        p = training.plan_skill("Agility", 45, xp_for_level(45), 70, lambda n, s="buy": None, guides=guides,
+                                quest_state=lambda q: 2)
+        got = [(s["method"], s["from"], s["to"]) for s in p["segments"]]
+        self.assertEqual(got, [("Brimhaven Agility Arena", 45, 47), ("Wilderness Agility Course", 47, 62),
+                               ("Hallowed Sepulchre", 62, 70)])
+        self.assertEqual(p["rateSource"], "wiki")
+        locked = training.plan_skill("Agility", 65, xp_for_level(65), 70, lambda n, s="buy": None, guides=guides,
+                                     quest_state=lambda q: 0)
+        self.assertNotIn("Hallowed Sepulchre", [s["method"] for s in locked["segments"]])
+        opt = {o["method"]: o for o in locked["options"]}
+        self.assertEqual(opt["Hallowed Sepulchre"]["needs"], ["Sins of the Father"])
+
+    def test_wiki_boost(self):
+        guides = {"boosts": {"Agility": [{"item": "Agility potion", "lo": 3, "hi": 3, "note": ""},
+                                         {"item": "Summer pie", "lo": 5, "hi": 5, "note": ""},
+                                         {"item": "Agility mix", "lo": 3, "hi": 3, "note": "Requires Barbarian Training"}]}}
+        prices = {"Agility potion": 900, "Summer pie": 400, "Agility mix": 10}
+        b = training.best_boost("Agility", 3, 60, lambda n, s="buy": prices.get(n), guides)
+        self.assertEqual(b, ("Summer pie", 5, "Summer pie"))  # the cheapest that covers it, no unlocks
+
+    def test_snapshot(self):
+        g = self.G.load()
+        self.assertGreater(sum(len(v) for v in g["methods"].values()), 100)
+        self.assertIn("Agility", g["boosts"])
+
+
 if __name__ == "__main__":
     unittest.main()

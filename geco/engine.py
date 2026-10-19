@@ -7,7 +7,7 @@ import time
 
 from . import (
     account, analytics, brief, coach, edge, extras, features, fills, forecast, forecast_eval, hold,
-    market, networth, news, quests, push, recipes, targets, wealth,
+    market, networth, news, quests, push, recipes, skillguides, targets, wealth,
 )
 from .config import DATA_DIR
 
@@ -514,13 +514,36 @@ class Engine:
             self._err("news", e)
 
     def refresh_quests(self):
-        """Quest data from the Wiki, at most weekly (about 12 bulk requests). Demo uses the snapshot."""
+        """Quest data and skill training guides from the Wiki, at most weekly (about 14 bulk
+        requests). Demo uses the shipped snapshots."""
         if getattr(self.client, "is_demo", False) or self.cfg.get("quests_enabled", True) is False:
             return
         try:
             quests.refresh(self.db, self.client)
         except Exception as e:
             self._err("quests", e)
+        try:
+            # Guide tables are priced from the GE, so wait for the first price refresh.
+            for _ in range(60):
+                if self.by_id or self._stop.is_set():
+                    break
+                time.sleep(2)
+            names = {quests.norm(k): k for k in quests.load(self.db)}
+            skillguides.refresh(self.db, self.client, names, self.guide_price)
+        except Exception as e:
+            self._err("skillguides", e)
+
+    def guide_price(self, name):
+        """Instant-buy price for an item named in a Wiki guide, or None."""
+        iid = self.name_index().get((name or "").strip().lower())
+        r = self.by_id.get(iid) if iid else None
+        return (r.get("high") or r.get("low")) if r else None
+
+    def name_index(self):
+        if getattr(self, "_names_for", None) is not self.mapping:
+            self._names = {(m.get("name") or "").lower(): iid for iid, m in self.mapping.items()}
+            self._names_for = self.mapping
+        return self._names
 
     def stop(self):
         self._stop.set()

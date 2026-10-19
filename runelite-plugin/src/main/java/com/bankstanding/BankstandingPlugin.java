@@ -728,7 +728,7 @@ public class BankstandingPlugin extends Plugin
 		Map<String, int[]> levels = new java.util.TreeMap<>();
 		for (Skill sk : Skill.values())
 		{
-			if (sk != Skill.OVERALL)
+			if (!"OVERALL".equals(sk.name())) // still in Skill.values(), deprecated
 			{
 				levels.put(sk.getName(), new int[]{client.getRealSkillLevel(sk), client.getSkillExperience(sk)});
 			}
