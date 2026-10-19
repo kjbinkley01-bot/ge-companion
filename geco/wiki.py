@@ -99,7 +99,20 @@ class WikiClient:
     def wiki_api(self, params):
         """One read-only MediaWiki API query on the OSRS Wiki (update posts)."""
         q = dict(params, format="json", formatversion="2")
-        return self._get(WIKI_API + "?" + urllib.parse.urlencode(q))
+        url = WIKI_API + "?" + urllib.parse.urlencode(q)
+        if len(url) <= 6000:
+            return self._get(url)
+        # Long wikitext to expand goes in the body (still a read-only query).
+        req = urllib.request.Request(WIKI_API, data=urllib.parse.urlencode(q).encode(), method="POST", headers={
+            "User-Agent": self.user_agent, "Accept": "application/json",
+            "Content-Type": "application/x-www-form-urlencoded"})
+        try:
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            raise ApiError(f"HTTP {e.code} from {WIKI_API}") from e
+        except (urllib.error.URLError, TimeoutError, ValueError) as e:
+            raise ApiError(f"Could not reach {WIKI_API}: {e}") from e
 
     def news_rss(self):
         """Jagex's Old School news feed (raw RSS bytes)."""

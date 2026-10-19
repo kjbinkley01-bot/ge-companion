@@ -360,10 +360,14 @@ class Engine:
 
     def farm_checks(self, now):
         """Patches and bird houses that just finished growing (once each), from the plugin's data."""
-        from . import patches
+        from . import dailies, patches
         try:
             for key, msg in patches.due_notices(self.db, account.accounts(self.db), now):
                 self.notify(msg, event="farming", key=key, cooldown=30 * 86400, title="Farming")
+            if self.rows:
+                d = dailies.reset_notice(self.db, self, now)
+                if d:
+                    self.notify(d[1], event="dailies", key=d[0], cooldown=2 * 86400, title="Dailies")
         except Exception as e:
             self._err("farming patches", e)
 
@@ -548,6 +552,9 @@ class Engine:
             self._err("skillguides", e)
         try:
             farming.refresh(self.db, self.client)
+            from . import dailies, slayer
+            dailies.refresh(self.db, self.client)
+            slayer.refresh(self.db, self.client, list(quests.load(self.db)))
         except Exception as e:
             self._err("farming", e)
         try:

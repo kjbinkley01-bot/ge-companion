@@ -164,7 +164,25 @@ A free alternative to GE Tracker premium, built only on public, read-only data.
   per set (`due_notices`, push event `farming`). `pace` = median minutes between plantings in
   different places (5+), used by `farming.plan_run` instead of `STOP_MINUTES`. Diaries the plugin
   reports (kv `diaries:<acct>`) and a grown spirit tree set farming unlocks (`derived_unlocks`).
-* Data versions: `quests.VERSION`, `skillguides.VERSION`, `setups.VERSION` and `farming.VERSION` are stored with the
+* `geco/dailies.py`: repeatable tasks (`TASKS`, quantities from the Wiki's Repeatable events page,
+  per diary tier), valued live (sell after tax, buy at instant buy; a stale far high is ignored),
+  herb box value from the Wiki's `{{Average drop value}}` weekly (kv `dailies_wiki`, `HERB_BOX`
+  until then). Done ticks in kv `dailies_done:<acct>`, daily reset 00:00 UTC, Tears of Guthix 7 days
+  after the visit. `reset_notice` (push event `dailies`). `plan(diaries=, quests_done=)` tries unlocks.
+* `geco/unlocks.py`: each candidate (next diary tier per region with its reward item as virtual
+  ownership, quests in `QUESTS` with items they give, magic secateurs) applied to a
+  `farming.Context.clone()` and to `dailies.plan`; weekly delta of gp (only runs that make money,
+  plus dailies), Farming XP and run minutes; quests get `planner.build` hours. Cached 30 minutes.
+* `geco/slayer.py`: task log from slayer events (`slayer_task`, finished vs replaced); Wiki data
+  (subpage `<Master>/Slayer assignments` or the master page's Tasks section, all expanded in one
+  POSTed `expandtemplates`; monster hitpoints and Slayer XP from infoboxes, `REPRESENTATIVE` for
+  group tasks), snapshot `geco/slayer_snapshot.json`; `MASTERS` points (Wiki table), block costs
+  (Aug 2025), skip cost a setting (default block cost minus 10). `optimise`: thresholds over tasks
+  sorted by value, blocks to the heaviest bad ones (slots: QP//50 up to 6, +1 elite Lumbridge),
+  skips while points per task cover them, each step must beat the last by 2%. Rates: measured
+  (XP log over active session minutes) else rough (HP based). Prefs in kv `slayer_prefs:<acct>`.
+  `wiki_api` POSTs when the URL would pass 6,000 characters.
+* Data versions: `quests.VERSION`, `skillguides.VERSION`, `setups.VERSION`, `farming.VERSION` and `slayer.VERSION` are stored with the
   data; a stored copy from another version is ignored (snapshot used) and fetched again at once.
 * `geco/account.py`: ingests plugin files incrementally (byte offsets, whole lines only), keeps
   latest GE offers, reconstructs fills from cumulative offer changes, FIFO matches them into
@@ -301,7 +319,10 @@ setups fitted to your bank, custom sets, export to Inventory Setups).
 v9: Farming runs page (every Wiki run plus bird houses, crops, compost, payments, guarding
 flowers, teleports and locks for your account, daily routine, make or buy compost, run setups),
 Farming runs as a planner training method.
-Open questions to verify in game: farming minutes per stop, whether a sell offer's `spent` is before or after tax
+v10: patch, bird house, diary and Slayer tracking from the plugin (ready alerts, your own minutes per
+stop, diaries set unlocks); Dailies page; Best unlocks advisor; Slayer advisor (masters, blocks, skips).
+Open questions to verify in game: each master's task cancel cost (Aug 2025 rework), the plugin's farm
+events against Time Tracking, the Slayer master varbit's numbering, whether a sell offer's `spent` is before or after tax
 (`account.sell_split` handles both), how promptly collection box containers update, and whether every `Quest` enum name matches
 the Wiki title (`quests.norm` covers "The" and "(quest)").
 Hiscores response format verified against the live endpoint (Sep 2026).

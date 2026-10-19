@@ -472,6 +472,9 @@ const PAGE_ICONS = {
   cycles: "M2 12c2.5-6 5.5-6 8 0s5.5 6 8 0 M18 12c1-2.4 2.2-3.6 4-4 M6 18v3 M14 3v3",
   planner: "M4 4h16v16H4z M8 9l2 2 4-4 M8 15h8",
   setups: "M6 3h12v4H6z M4 9h16v12H4z M9 13h6 M9 17h6",
+  dailies: "M4 5h16v15H4z M4 9h16 M8 3v4 M16 3v4 M8 14l2 2 4-4",
+  unlocks: "M7 11V8a5 5 0 0 1 9.6-2 M5 11h14v10H5z M12 15v2",
+  slayer: "M4 20l9-9 M14 4l6 6-8 8-2-2 M6 14l4 4 M3 21l2-2",
   runs: "M12 21v-9 M12 12c0-4 3-7 8-7 0 4-3 7-8 7z M12 15c0-3-2.5-5-6.5-5 0 3 2.5 5 6.5 5z M5 21h14",
   watch: "M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z",
   alerts: "M6 16v-5a6 6 0 0 1 12 0v5l2 2H4z M10 21h4",
@@ -491,7 +494,7 @@ const PAGE_GROUPS = [
   ["Trade", [["terminal", "Terminal"], ["flips", "Flip finder"], ["cycles", "Cycles"], ["watch", "Watchlist"], ["alerts", "Alerts"]]],
   ["Market", [["market", "Market"], ["movers", "Movers"], ["news", "News"]]],
   ["Research", [["forecast", "Forecast"], ["backtest", "Backtest"]]],
-  ["Quests and goals", [["planner", "Planner"], ["setups", "Setups"], ["runs", "Farming runs"]]],
+  ["Goals and routines", [["planner", "Planner"], ["setups", "Setups"], ["runs", "Farming runs"], ["dailies", "Dailies"], ["unlocks", "Best unlocks"], ["slayer", "Slayer"]]],
   ["Skilling and tools", [["money", "Money making"], ["alch", "High alch"], ["decant", "Decanting"], ["account", "Account"], ["settings", "Settings"]]],
 ];
 const PAGE_LABEL = Object.fromEntries(PAGE_GROUPS.flatMap(([, p]) => p));
@@ -3039,6 +3042,118 @@ renderers.planner = async function (host) {
     for (const s of p.shopping.filter((x) => x.buy && !S.watch.has(x.id))) { await api("/api/watchlist", { method: "POST", body: { id: s.id } }); S.watch.add(s.id); }
     toast("Watching", "Every item on the shopping list is on your watchlist.");
   };
+};
+
+// Dailies: repeatable tasks worth doing, with resets ----------------------------------
+function dlLeft(t, now) {
+  const m = Math.max(0, Math.round((t - now) / 60));
+  return m >= 1440 ? `${Math.floor(m / 1440)} d ${Math.floor((m % 1440) / 60)} h` : m >= 60 ? `${Math.floor(m / 60)} h ${m % 60} min` : `${m} min`;
+}
+renderers.dailies = async function (host) {
+  host.innerHTML = `<h2>Dailies</h2>
+    <p class="lede">Daily and weekly tasks that pay for a minute or two of your time, from the Wiki's list of repeatable events: what each is worth at today's prices, in gp per minute, with the amount your diaries allow. Tick a task when it's done; it comes back at the reset (00:00 UTC, Tears of Guthix a week after your visit).</p>
+    <div id="dlOut"><div class="muted small">Loading...</div></div>`;
+  let p;
+  try { p = await api("/api/dailies"); } catch (e) { $("#dlOut", host).innerHTML = `<div class="notice">${esc(e.message)}</div>`; return; }
+  const now = p.now;
+  const row = (r) => `<tr class="static ${r.done ? "dl-done" : ""} ${r.available ? "" : "dl-off"}">
+      <td class="dl-tick">${r.available ? `<input type="checkbox" data-dl="${esc(r.key)}" ${r.done ? "checked" : ""} title="Done">` : ""}</td>
+      <td><a href="${esc(r.url)}" target="_blank" rel="noopener"><b>${esc(r.title)}</b></a><div class="muted small">${esc(r.where)}${r.qty > 1 ? ` · ${gp(r.qty)}${r.item ? " x " + esc(r.item) : ""}` : ""}${r.note ? ` · ${esc(r.note)}` : ""}${r.auto ? ` · <span class="pos">automatic</span>` : ""}</div>
+        ${r.needs.length ? `<div class="small neg">${arrow(-1)}Needs ${esc(r.needs.join(", "))}</div>` : ""}
+        ${r.next && r.available ? `<div class="small muted">The ${esc(r.next.tier)} ${esc(r.next.region)} diary adds ${gp(r.next.extra)} a day${r.next.value ? ` (${signed(Math.round(r.next.value), short)})` : ""}</div>` : ""}</td>
+      <td class="num">${r.value != null ? signed(Math.round(r.value), short) : `<span class="muted">${r.varies ? "varies" : r.available ? "no price yet" : "-"}</span>`}</td>
+      <td class="num">${r.auto ? "-" : r.minutes + " min"}</td>
+      <td class="num">${r.perMinute ? short(r.perMinute) + "/min" : "-"}</td>
+      <td class="num">${r.done ? `<span class="muted">back in ${dlLeft(r.resets, now)}</span>` : r.available ? `<span class="pos">${arrow(1)}open</span>` : ""}</td></tr>`;
+  $("#dlOut", host).innerHTML = `
+    ${p.diariesKnown ? "" : `<div class="notice soft" style="margin-bottom:8px">Your achievement diaries aren't known yet, so amounts are the ones without diaries. Log in with the RuneLite plugin running and they fill in.</div>`}
+    <div class="tiles">
+      <div class="tile"><div class="k">Still to do today</div><div class="v ${p.todo.value >= 0 ? "pos" : "neg"}">${signed(Math.round(p.todo.value), short)}</div><div class="s">${p.todo.count} tasks, about ${Math.round(p.todo.minutes)} min</div></div>
+      <div class="tile"><div class="k">Next reset</div><div class="v">${dlLeft(p.reset, now)}</div><div class="s">00:00 UTC, ${esc(fmtTime(p.reset))} your time</div></div>
+    </div>
+    <div class="card"><table class="dl-table">${thead([{ label: "" }, { label: "Task" }, { label: "Worth today", num: 1 }, { label: "Time", num: 1 }, { label: "gp a minute", num: 1 }, { label: "" }], null)}<tbody>${p.tasks.map(row).join("")}</tbody></table>
+      <p class="small muted">Quantities from the Wiki's <a href="${esc(p.url)}" target="_blank" rel="noopener">Repeatable events</a>; minutes are estimates with a teleport. Prices: instant sell after tax for what you get, instant buy for what you pay. Farming and bird house runs are on the <a class="rn-link" data-tab="runs">Farming runs</a> page.</p></div>`;
+  $$("[data-dl]", host).forEach((c) => (c.onchange = async () => { await api("/api/dailies/done", { method: "POST", body: { key: c.dataset.dl, done: c.checked } }); renderers.dailies(host); }));
+  $$("a[data-tab]", host).forEach((a) => (a.onclick = (e) => { e.preventDefault(); showTab(a.dataset.tab); }));
+};
+
+// Best unlocks: what a quest, diary tier or item would add to your week -------------
+const UL = Object.assign({ mode: "value" }, store.get("ul", {}));
+renderers.unlocks = async function (host) {
+  host.innerHTML = `<h2>Best unlocks</h2>
+    <p class="lede">Which quest, achievement diary tier or item would help your account the most, measured on what the app already plans for you. Each one is tried on a copy of your account: your farming routine is planned again (new patches, quicker teleports, bigger yields, your own minutes per stop) and your dailies are valued again (bigger diary amounts, tasks a quest opens). The difference is shown per week.</p>
+    <div class="seg" id="ulMode">${[["value", "Most gp"], ["xp", "Most Farming XP"], ["time", "Most time saved"]].map(([k, l]) => `<button data-k="${k}" class="${UL.mode === k ? "on" : ""}">${l}</button>`).join("")}</div>
+    <div id="ulOut"><div class="muted small">Trying each unlock on your account...</div></div>`;
+  $$("#ulMode [data-k]", host).forEach((b) => (b.onclick = () => { UL.mode = b.dataset.k; store.set("ul", UL); renderers.unlocks(host); }));
+  let p;
+  try { p = await api("/api/unlocks?mode=" + UL.mode); } catch (e) { $("#ulOut", host).innerHTML = `<div class="notice">${esc(e.message)}</div>`; return; }
+  const mins = (m) => (Math.abs(m) < 0.5 ? "-" : m < 0 ? `<span class="pos">${Math.abs(Math.round(m))} min saved</span>` : `+${Math.round(m)} min`);
+  const cost = (r) => r.kind === "quest" && r.hours != null ? `${r.hours < 1 ? Math.max(1, Math.round(r.hours * 60)) + " min" : r.hours.toFixed(1) + " h"}${r.questsFirst ? `, ${r.questsFirst} quest${r.questsFirst > 1 ? "s" : ""} first` : ""}${r.skills ? `, ${r.skills} skill${r.skills > 1 ? "s" : ""} to train` : ""}` : r.kind === "diary" ? "see its tasks" : r.why ? esc(r.why) : "";
+  $("#ulOut", host).innerHTML = `
+    ${p.diariesKnown ? "" : `<div class="notice soft" style="margin:8px 0">Your achievement diaries aren't known yet, so diary tiers aren't ranked. Log in with the RuneLite plugin running and they fill in.</div>`}
+    <div class="tiles" style="margin-top:8px">
+      <div class="tile"><div class="k">Your week now</div><div class="v ${p.base.gp >= 0 ? "pos" : "neg"}">${signed(Math.round(p.base.gp), short)}</div><div class="s">farming runs and dailies</div></div>
+      <div class="tile"><div class="k">Farming XP a week</div><div class="v">${short(p.base.xp)}</div><div class="s">${Math.round(p.base.minutes)} min of runs</div></div>
+    </div>
+    <div class="card">${p.rows.length ? `<table class="ul-table">${thead([{ label: "Unlock" }, { label: "gp a week", num: 1 }, { label: "Farming XP", num: 1 }, { label: "Runs", num: 1 }, { label: "What it takes" }], null)}<tbody>
+      ${p.rows.slice(0, 30).map((r, i) => `<tr class="static"><td><span class="ul-kind">${r.kind}</span> <a href="${esc(r.url)}" target="_blank" rel="noopener"><b>${esc(r.label)}</b></a>${i === 0 ? ` <span class="rn-best">Best next</span>` : ""}${r.changes.length ? `<div class="muted small">Changes your routine: ${esc(r.changes.join(", "))}</div>` : ""}</td>
+        <td class="num ${r.gp >= 0 ? "pos" : "neg"}">${Math.abs(r.gp) < 1 ? "-" : signed(Math.round(r.gp), short)}</td><td class="num">${Math.abs(r.xp) < 1 ? "-" : signed(Math.round(r.xp), short)}</td>
+        <td class="num" title="Minutes of runs a week (fewer is better)">${mins(r.minutes)}</td><td class="small muted">${cost(r)}${r.kind === "quest" ? ` · <a class="ul-plan" data-q="${esc(r.quest)}">Plan it</a>` : ""}</td></tr>`).join("")}</tbody></table>` : `<p class="muted">Nothing left that changes your runs or dailies.</p>`}
+      <p class="small muted">Per week, doing each run when it's ready and every daily you can. More patches can mean more minutes and more XP at once. gp counts runs that make money; runs done for XP cost the same either way. Quest times come from the planner (your pace once it has timed a few quests).</p></div>`;
+  $$(".ul-plan", host).forEach((a) => (a.onclick = () => { PL.goal = { type: "quest", name: a.dataset.q }; store.set("pl", PL); showTab("planner"); }));
+};
+
+// Slayer: block and skip advice for your goal --------------------------------------
+const SL = Object.assign({ master: null, goal: null }, store.get("sl", {}));
+renderers.slayer = async function (host) {
+  host.innerHTML = `<h2>Slayer</h2>
+    <p class="lede">Which master to use and which tasks to block or skip, from each master's assignment table on the Wiki (task weights, amounts, requirements) and your account. Blocks go to the tasks that cost you most; skips are added only while your points can pay for them, counting the bonus every 10th, 50th and 100th task. XP rates are rough until the plugin has timed a task of yours, then they're your own. Rate tasks to steer it.</p>
+    <div id="slOut"><div class="muted small">Loading...</div></div>`;
+  let p;
+  const qs = new URLSearchParams(Object.entries({ master: SL.master || "", goal: SL.goal || "" }).filter(([, v]) => v));
+  try { p = await api("/api/slayer?" + qs); } catch (e) { $("#slOut", host).innerHTML = `<div class="notice">${esc(e.message)}</div>`; return; }
+  const m = p.masters.find((x) => x.master === p.master) || p.masters[0];
+  const st = p.state || {};
+  const plan = m && m.plan;
+  const save = async (body) => { await api("/api/slayer/prefs", { method: "POST", body }); renderers.slayer(host); };
+  const cur = new Set((st.blocked || []).map((b) => b.toLowerCase()));
+  const rec = new Set(((plan || {}).blocks || []).map((b) => b.toLowerCase()));
+  const toBlock = [...rec].filter((b) => !cur.has(b));
+  const toFree = [...cur].filter((b) => !rec.has(b) && m.tasks.some((t) => t.task.toLowerCase() === b));
+  const title = (n) => (m.tasks.concat(m.lockedTasks).find((t) => t.task.toLowerCase() === n) || { task: n }).task;
+  const rateCell = (r) => (p.goal === "liked" ? ["", "dislike", "ok", "like"][r.rating] : r.xph ? short(r.xph) + "/h" : "-");
+  $("#slOut", host).innerHTML = `
+    ${p.known ? "" : `<div class="notice soft" style="margin-bottom:8px">Your levels and quests aren't known yet, so every task counts as open. Log in with the RuneLite plugin running and it fills in.</div>`}
+    <div class="tiles">
+      <div class="tile"><div class="k">Current task</div><div class="v rn-v">${st.task && st.count ? esc(st.task) : "None"}</div><div class="s">${st.task && st.count ? `${gp(st.count)} of ${gp(st.original || st.count)} left${st.area ? ", " + esc(st.area) : ""}` : "as last seen by the plugin"}</div></div>
+      <div class="tile"><div class="k">Points</div><div class="v">${st.points != null ? gp(st.points) : "-"}</div><div class="s">${st.streak != null ? `streak ${gp(st.streak)}, next bonus in ${10 - (st.streak % 10)}` : ""}</div></div>
+      <div class="tile"><div class="k">Best master for you</div><div class="v rn-v">${esc(p.best || "-")}</div><div class="s">${p.slots} block slot${p.slots === 1 ? "" : "s"} (1 per 50 quest points${p.slots > 6 ? ", plus the elite Lumbridge diary" : ""})</div></div>
+      <div class="tile"><div class="k">Timed by you</div><div class="v">${p.measuredTasks}</div><div class="s">task types with your own XP rate</div></div>
+    </div>
+    <div class="rn-bar" style="margin-top:8px"><div class="seg" id="slGoal">${[["xp", "Fastest XP"], ["liked", "Tasks I like"]].map(([k, l]) => `<button data-k="${k}" class="${p.goal === k ? "on" : ""}">${l}</button>`).join("")}</div>
+      <label class="field"><span>Master</span><select class="input" id="slMaster">${p.masters.map((x) => `<option value="${esc(x.master)}" ${x.master === m.master ? "selected" : ""} ${x.locked.length ? "disabled" : ""}>${esc(x.master)}${x.master === p.best ? " (best)" : ""}${x.locked.length ? " (needs " + esc(x.locked.join(", ")) + ")" : ""}</option>`).join("")}</select></label>
+      <label class="field"><span>Skip cost</span><input class="input" id="slCancel" type="number" min="0" style="width:90px" value="${m.cancel}" title="Points to cancel a task with ${esc(m.master)}: check the rewards shop, it differs by master"></label>
+      <details class="rn-unlocks"><summary class="btn">Slayer unlocks</summary><div class="card"><p class="small muted" style="margin-top:0">Bought unlocks the plugin can't see. A task you've had assigned counts as unlocked.</p>${p.unlockNames.map((u) => `<label class="rn-check"><input type="checkbox" data-su="${esc(u)}" ${p.unlocks.includes(u) ? "checked" : ""}> ${esc(u)}</label>`).join("")}</div></details></div>
+    <div class="card" style="margin-top:8px"><h3 style="margin-top:0">Masters compared</h3><table>${thead([{ label: "Master" }, { label: "Tasks open", num: 1 }, { label: p.goal === "liked" ? "Avg rating" : "XP an hour", num: 1 }, { label: "Points a task", num: 1 }, { label: "After skips", num: 1 }, { label: "Tasks kept", num: 1 }], null)}<tbody>
+      ${p.masters.map((x) => `<tr class="static ${x.master === m.master ? "sl-on" : ""}"><td><a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.master)}</a>${x.locked.length ? ` <span class="muted small">needs ${esc(x.locked.join(", "))}</span>` : ""}</td><td class="num">${x.eligible}</td><td class="num">${x.plan ? (p.goal === "liked" ? x.plan.rate.toFixed(2) : short(x.plan.rate)) : "-"}</td><td class="num">${x.points.toFixed(1)}</td><td class="num">${x.plan ? x.plan.balance.toFixed(1) : "-"}</td><td class="num">${x.plan ? Math.round(x.plan.keptShare * 100) + "%" : "-"}</td></tr>`).join("")}</tbody></table></div>
+    <div class="rn-grid" style="grid-template-columns:minmax(0,1fr) 340px">
+      <div class="card"><h3 style="margin-top:0">${esc(m.master)}'s tasks</h3><table class="sl-tasks">${thead([{ label: "Task" }, { label: "Chance", num: 1 }, { label: "Amount", num: 1 }, { label: p.goal === "liked" ? "Rating" : "XP an hour", num: 1 }, { label: "Advice" }, { label: "You" }], null)}<tbody>
+        ${m.tasks.map((r) => `<tr class="static"><td>${esc(r.task)}${r.blocked ? ` <span class="muted small">(blocked now)</span>` : ""}<div class="muted small">${r.xp ? `${short(r.xp)} XP, ${Math.round(r.minutes)} min, ${esc(r.source)}` : esc(r.source)}</div></td><td class="num">${(r.chance * 100).toFixed(1)}%</td><td class="num">${r.min}-${r.max}</td><td class="num">${rateCell(r)}</td>
+          <td><span class="sl-adv sl-${r.advice}">${r.advice}</span></td><td><select class="input sl-rate" data-t="${esc(r.task)}">${[["", "-"], ["like", "Like"], ["ok", "OK"], ["dislike", "Dislike"], ["skip", "Always skip"], ["do", "Always do"]].map(([k, l]) => `<option value="${k}" ${(p.ratings[r.task] || "") === k ? "selected" : ""}>${l}</option>`).join("")}</select></td></tr>`).join("")}</tbody></table>
+        ${m.lockedTasks.length ? `<details class="small"><summary class="muted">${m.lockedTasks.length} tasks you can't get yet</summary>${m.lockedTasks.map((r) => `<div><span class="muted">${esc(r.task)}:</span> ${esc(r.needs.join(", "))}</div>`).join("")}</details>` : ""}</div>
+      <div>
+        <div class="card"><h3 style="margin-top:0">Do this</h3>${plan ? `
+          <h4>Block (${plan.blocks.length} of ${p.slots})</h4><p class="small" style="margin-top:0">${plan.blocks.map(esc).join(", ") || "Nothing worth a slot."}</p>
+          ${toBlock.length || toFree.length ? `<p class="small">${toFree.length ? `Unblock ${toFree.map((b) => esc(title(b))).join(", ")}. ` : ""}${toBlock.length ? `Block ${toBlock.map((b) => esc(title(b))).join(", ")} (${m.blockCost} points each).` : ""}</p>` : st.blocked && st.blocked.length ? `<p class="small pos">${arrow(1)}Your blocks already match.</p>` : ""}
+          <h4>Skip when given</h4><p class="small" style="margin-top:0">${plan.skips.map(esc).join(", ") || "Nothing: do every task you're given."}</p>
+          <p class="small muted">${plan.skipsPerTask ? `About ${plan.skipsPerTask.toFixed(2)} skips a finished task, ` : ""}${plan.balance.toFixed(1)} points a task left over. ${p.goal === "liked" ? "" : `About ${short(plan.rate)} XP an hour of tasks, skips and trips counted.`}</p>` : `<p class="muted small">Nothing to plan with this master yet.</p>`}</div>
+        <p class="small muted">Rough rates assume a kill takes longer the more hitpoints a monster has, so on their own they mostly favour more XP a kill; the plugin replaces them with your own once you finish a task. Skip costs differ by master since August 2025: set yours from the rewards shop. Data: ${esc(p.source || "")}.</p>
+      </div></div>`;
+  $$("#slGoal [data-k]", host).forEach((b) => (b.onclick = () => { SL.goal = b.dataset.k; store.set("sl", SL); save({ goal: b.dataset.k }); }));
+  $("#slMaster", host).onchange = (e) => { SL.master = e.target.value; store.set("sl", SL); save({ master: e.target.value }); };
+  $("#slCancel", host).onchange = (e) => save({ cancel: Object.assign(Object.fromEntries(p.masters.map((x) => [x.master, x.cancel])), { [m.master]: Math.max(0, +e.target.value || 0) }) });
+  $$("[data-su]", host).forEach((c) => (c.onchange = () => save({ unlocks: $$("[data-su]", host).filter((x) => x.checked).map((x) => x.dataset.su) })));
+  $$(".sl-rate", host).forEach((s) => (s.onchange = () => { const r = Object.assign({}, p.ratings); if (s.value) r[s.dataset.t] = s.value; else delete r[s.dataset.t]; save({ ratings: r }); }));
 };
 
 // Farming runs: best crops, patches and teleports for the account --------------------

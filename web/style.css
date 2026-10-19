@@ -969,3 +969,23 @@ tr[data-cy].sel td { background: var(--accent-bg); }
 .rn-group b { font-size: 15px; font-variant-numeric: tabular-nums; }
 .rn-group.on b { color: var(--accent); }
 .rn-patches td { padding: 3px 6px; }
+
+/* Dailies */
+.dl-table td { vertical-align: top; }
+.dl-table td a { color: var(--text); text-decoration: none; }
+.dl-tick { width: 26px; }
+.dl-done td { opacity: .55; }
+.dl-off td { opacity: .7; }
+.ul-table td { vertical-align: top; }
+.ul-table td a { color: var(--text); text-decoration: none; }
+.ul-kind { display: inline-block; min-width: 42px; font-size: 11px; color: var(--muted); text-transform: capitalize; }
+.ul-plan { cursor: pointer; text-decoration: underline; text-decoration-color: var(--muted); text-underline-offset: 2px; }
+
+/* Slayer */
+.sl-tasks td { vertical-align: top; }
+.sl-tasks .input { padding: 2px 6px; font-size: 12px; }
+.sl-adv { display: inline-block; font-size: 11px; border-radius: 999px; padding: 1px 8px; border: 1px solid var(--border, var(--muted)); text-transform: capitalize; }
+.sl-adv.sl-block { color: var(--neg, #ff5a5f); border-color: currentColor; }
+.sl-adv.sl-skip { color: var(--muted); }
+.sl-adv.sl-do { color: var(--accent); border-color: currentColor; }
+.sl-on td { background: var(--accent-bg); }

@@ -437,6 +437,17 @@ def make_handler(app):
                 from . import farming
                 mode = "value" if q.get("mode") == "value" else "xp"
                 return self._send(200, farming.plan_all(D, E, mode, acct=q.get("acct") or None))
+            if path == "/api/unlocks":
+                from . import unlocks
+                mode = q.get("mode") if q.get("mode") in ("value", "xp", "time") else "value"
+                return self._send(200, unlocks.rank(D, E, acct=q.get("acct") or None, mode=mode))
+            if path == "/api/slayer":
+                from . import slayer
+                return self._send(200, slayer.advise(D, E, acct=q.get("acct") or None, master=q.get("master") or None,
+                                                     goal=q.get("goal") or None))
+            if path == "/api/dailies":
+                from . import dailies
+                return self._send(200, dailies.plan(D, E, acct=q.get("acct") or None))
             if path == "/api/patches":
                 from . import patches, planner
                 acct = q.get("acct") or planner.main_account(D)
@@ -586,6 +597,16 @@ def make_handler(app):
                 from . import setups
                 sid = setups.custom_save(D, b.get("id"), b.get("name"), b.get("data") or {}, now)
                 return self._send(200, {"id": sid, "key": f"mine|{sid}"})
+            if path == "/api/slayer/prefs":
+                from . import planner, slayer
+                acct = b.get("acct") or planner.main_account(D)
+                cur = slayer.prefs(D, acct)
+                cur.update({k: v for k, v in b.items() if k != "acct"})
+                return self._send(200, slayer.save_prefs(D, acct, cur))
+            if path == "/api/dailies/done":
+                from . import dailies, planner
+                acct = b.get("acct") or planner.main_account(D)
+                return self._send(200, {"done": dailies.mark(D, acct, b["key"], bool(b.get("done", True)), now)})
             if path == "/api/runs/unlocks":
                 # Diaries and unlocks the plugin cannot see, ticked on the Runs page.
                 from . import farming

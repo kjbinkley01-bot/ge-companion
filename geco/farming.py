@@ -467,6 +467,7 @@ class Context:
         self.data = load(db)
         self.disease = self.data.get("disease") or {}
         self._find = {}
+        self.virtual = set()  # item names treated as owned (trying an unlock)
 
     def level(self, skill):
         return self.levels.get(skill) or (1 if self.known else 99)
@@ -484,8 +485,17 @@ class Context:
         return self._find[name]
 
     def has(self, name):
+        if name and name.lower() in self.virtual:
+            return True
         info = self.find(name)
         return bool(info) and any(self.own.get(i) for i in info.get("ids") or [info["id"]])
+
+    def clone(self):
+        """A copy to try an unlock on (quests, levels, unlocks and items can change)."""
+        import copy
+        c = copy.copy(self)
+        c.levels, c.states, c.unlocks, c.virtual = dict(self.levels), dict(self.states), set(self.unlocks), set(self.virtual)
+        return c
 
     def price(self, name, side="buy"):
         """Instant-buy price to buy, instant-sell price after tax to sell. A lone stale trade far
