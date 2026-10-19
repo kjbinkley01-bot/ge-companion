@@ -23,6 +23,7 @@ from urllib.parse import quote
 
 from .quests import LINK, SCP, SKILL_SET, norm, plain
 
+VERSION = 2  # 2: inventory and equipment setups
 SNAPSHOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "skillguides_snapshot.json")
 WIKI = "https://oldschool.runescape.wiki/w/"
 MELEE = "Pay-to-play Melee training"
@@ -516,6 +517,16 @@ def items(text):
     return out[:28]
 
 
+def _setup(text):
+    """The first equipment and inventory shown with a method, for Inventory Setups."""
+    from . import setups
+    for ex in setups.examples(text):
+        inv = [list(c) if c else None for c in ex["inv"] or []]
+        if ex["eq"] or any(inv):
+            return {"eq": ex["eq"], "inv": inv, "rp": [list(c) for c in ex["rp"] or []], "label": ex["label"]}
+    return None
+
+
 def summary(text):
     for s in _sentences(text):
         t = plain(s)
@@ -576,7 +587,7 @@ def parse_guide(skill, title, text, quest_names, price=None):
             "typical": round(flat[len(flat) // 2]) if flat else None,
             "low": round(flat[0]) if flat else None, "high": round(flat[-1]) if flat else None,
             "gpPerXp": round(sorted(gps)[len(gps) // 2], 2) if gps else None,
-            "req": req, "items": items(body), "summary": summary(body),
+            "req": req, "items": items(body), "setup": _setup(body), "summary": summary(body),
             "url": WIKI + quote(title.replace(" ", "_")) + "#" + anc,
             "fastest": bool(parent and re.search(r"(?i)fastest|recommended training", parent)),
         })
@@ -652,7 +663,7 @@ def fetch_all(client, quest_names, price=None, sleep=1.0):
     boosts = {}
     for t, x in btexts.items():
         boosts[t.split("/", 1)[1]] = parse_boosts(t.split("/", 1)[1], x)
-    return {"source": "OSRS Wiki training guides and Temporary skill boost (CC BY-NC-SA 3.0)",
+    return {"source": "OSRS Wiki training guides and Temporary skill boost (CC BY-NC-SA 3.0)", "version": VERSION,
             "fetched": int(time.time()), "methods": methods, "boosts": boosts}
 
 
@@ -663,7 +674,7 @@ def load(db=None):
     """The parsed guides: stored copy if fetched, else the shipped snapshot."""
     if db is not None:
         d = db.kv_get("skillguides")
-        if d and d.get("methods"):
+        if d and d.get("methods") and d.get("version") == VERSION:
             return d
     if "snap" not in _cache:
         try:
@@ -677,7 +688,7 @@ def load(db=None):
 def refresh(db, client, quest_names, price=None, max_age=7 * 86400):
     """Read the guides again when the stored copy is older than a week. Returns the method count."""
     d = db.kv_get("skillguides") or {}
-    if d.get("fetched") and time.time() - d["fetched"] < max_age:
+    if d.get("fetched") and time.time() - d["fetched"] < max_age and d.get("version") == VERSION:
         return 0
     data = fetch_all(client, quest_names, price)
     if sum(len(v) for v in data["methods"].values()) >= 40:

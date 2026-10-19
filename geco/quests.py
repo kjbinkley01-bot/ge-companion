@@ -16,6 +16,9 @@ SKILLS = ["Attack", "Strength", "Defence", "Ranged", "Prayer", "Magic", "Runecra
           "Hitpoints", "Agility", "Herblore", "Thieving", "Crafting", "Fletching", "Slayer", "Hunter",
           "Mining", "Smithing", "Fishing", "Cooking", "Firemaking", "Woodcutting", "Farming", "Sailing"]
 SKILL_SET = {s.lower(): s for s in SKILLS}
+# Bumped when parsing adds fields (2: XP rewards), so a stored copy from an older version is
+# read again instead of waiting a week.
+VERSION = 2
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS quest_data (name TEXT PRIMARY KEY, data TEXT NOT NULL, fetched INTEGER);
 """
@@ -344,6 +347,7 @@ def fetch_all(client, sleep=1.0):
 
 def store(db, data):
     now = int(time.time())
+    db.kv_set("quests_version", VERSION)
     db.conn.executemany("INSERT OR REPLACE INTO quest_data (name, data, fetched) VALUES (?,?,?)",
                         [(k, json.dumps(v), now) for k, v in data.items()])
     db.conn.commit()
@@ -351,7 +355,7 @@ def store(db, data):
 
 def load(db):
     """{name: quest} from the database, or the shipped snapshot if it has not been fetched yet."""
-    rows = db.q("SELECT name, data FROM quest_data")
+    rows = db.q("SELECT name, data FROM quest_data") if db.kv_get("quests_version") == VERSION else []
     if rows:
         return {r["name"]: json.loads(r["data"]) for r in rows}
     return load_snapshot()
@@ -373,7 +377,7 @@ def fetched_at(db):
 def refresh(db, client, max_age=7 * 86400, sleep=1.0):
     """Fetch again when the stored data is older than a week. Returns the count stored."""
     last = fetched_at(db)
-    if last and time.time() - last < max_age:
+    if last and time.time() - last < max_age and db.kv_get("quests_version") == VERSION:
         return 0
     data = fetch_all(client, sleep)
     if len(data) > 50:

@@ -1045,6 +1045,12 @@ class BankstandingPanel extends PluginPanel
 			goal.add(Ui.heading("Next up"));
 			goal.add(taskCard(tasks.get(0).getAsJsonObject(), true));
 		}
+		JsonObject su = g.has("setup") && g.get("setup").isJsonObject() ? g.getAsJsonObject("setup") : null;
+		if (su != null)
+		{
+			goal.add(Ui.heading("Setup for this step"));
+			goal.add(setupCard(su, g.has("setupCount") ? g.get("setupCount").getAsInt() : 1));
+		}
 		if (tasks.size() > 1)
 		{
 			goal.add(Ui.heading("Then"));
@@ -1099,6 +1105,56 @@ class BankstandingPanel extends PluginPanel
 		open.addActionListener(e -> host.openDashboard("/?tab=planner"));
 		goal.add(open);
 		done(goal);
+	}
+
+	/** The next step's gear and inventory: copy it for Inventory Setups' Import, or open it there
+	 * once imported (which filters the bank to it). */
+	private JPanel setupCard(JsonObject su, int count)
+	{
+		JPanel card = Ui.card(BorderFactory.createEmptyBorder(7, 8, 7, 8));
+		JPanel s = Ui.stack(3);
+		String name = Fmt.str(su, "name");
+		s.add(Ui.wrap(name, Ui.TEXT, 190));
+		Double have = Fmt.num(su, "have"), all = Fmt.num(su, "count");
+		if (have != null && all != null)
+		{
+			s.add(Ui.small("You own " + have.intValue() + " of " + all.intValue() + " items"));
+		}
+		StringBuilder miss = new StringBuilder();
+		for (JsonElement e : Fmt.arr(su, "missing"))
+		{
+			miss.append(miss.length() > 0 ? ", " : "").append(e.getAsString());
+		}
+		if (miss.length() > 0)
+		{
+			s.add(Ui.wrap("Missing: " + miss, Ui.WARN, 190));
+		}
+		boolean imported = host.inventorySetups().contains(name);
+		JPanel row = new JPanel(new java.awt.GridLayout(1, 2, 4, 0));
+		row.setOpaque(false);
+		JButton copy = smallButton("Copy setup", "Copy for Inventory Setups: open it, choose Import setup and paste");
+		copy.addActionListener(e ->
+		{
+			java.awt.Toolkit.getDefaultToolkit().getSystemClipboard()
+				.setContents(new java.awt.datatransfer.StringSelection(Fmt.str(su, "portable")), null);
+			copy.setText("Copied");
+		});
+		JButton open = smallButton("Open", imported ? "Show it in Inventory Setups (filters your bank)"
+			: "Import it into Inventory Setups first");
+		open.setEnabled(imported);
+		open.addActionListener(e -> host.openInventorySetup(name));
+		row.add(copy);
+		row.add(open);
+		s.add(row);
+		s.add(Ui.small(imported ? "In Inventory Setups" : "Not in Inventory Setups yet: copy, then Import setup"));
+		if (count > 1)
+		{
+			JButton every = smallButton("All " + count + " setups for this goal", "Open the Setups page in your browser");
+			every.addActionListener(e -> host.openDashboard("/?tab=setups"));
+			s.add(every);
+		}
+		card.add(s);
+		return card;
 	}
 
 	private JPanel taskCard(JsonObject t, boolean big)

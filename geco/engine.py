@@ -6,8 +6,8 @@ import threading
 import time
 
 from . import (
-    account, analytics, brief, coach, edge, extras, features, fills, forecast, forecast_eval, hold,
-    market, networth, news, quests, push, recipes, skillguides, targets, wealth,
+    access, account, analytics, brief, coach, edge, extras, features, fills, forecast, forecast_eval, hold,
+    market, networth, news, quests, push, recipes, setups, skillguides, targets, wealth,
 )
 from .config import DATA_DIR
 
@@ -43,6 +43,7 @@ class Engine:
         networth.init(db)
         news.init(db)
         quests.init(db)
+        setups.init(db)
         for mod in (wealth, edge, targets, extras):
             mod.init(db)
         self.demo_feed = None
@@ -514,8 +515,8 @@ class Engine:
             self._err("news", e)
 
     def refresh_quests(self):
-        """Quest data and skill training guides from the Wiki, at most weekly (about 14 bulk
-        requests). Demo uses the shipped snapshots."""
+        """Quest data, skill training guides, boss setups and item IDs from the Wiki, at most
+        weekly (about 35 bulk requests, a second apart). Demo uses the shipped snapshots."""
         if getattr(self.client, "is_demo", False) or self.cfg.get("quests_enabled", True) is False:
             return
         try:
@@ -532,6 +533,11 @@ class Engine:
             skillguides.refresh(self.db, self.client, names, self.guide_price)
         except Exception as e:
             self._err("skillguides", e)
+        try:
+            extra = setups.referenced_names(skillguides.load(self.db), quests.load(self.db))
+            setups.refresh(self.db, self.client, list(access.BOSSES), extra, set(self.name_index()))
+        except Exception as e:
+            self._err("setups", e)
 
     def guide_price(self, name):
         """Instant-buy price for an item named in a Wiki guide, or None."""

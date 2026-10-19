@@ -35,6 +35,36 @@ class DemoFeed:
         if not os.path.exists(os.path.join(folder, "progress.done")):
             self._progress()
             open(os.path.join(folder, "progress.done"), "w").close()
+        if not os.path.exists(os.path.join(folder, "gear.done")):
+            self._gear()
+            open(os.path.join(folder, "gear.done"), "w").close()
+
+    GEAR = ["Karil's coif", "Ava's assembler", "Toxic blowpipe", "Black d'hide body", "Black d'hide chaps",
+            "Barrows gloves", "Pegasian boots", "Archers ring (i)", "Salve amulet(ei)", "Anti-dragon shield",
+            "Graceful hood", "Graceful top", "Graceful legs", "Graceful gloves", "Graceful boots", "Graceful cape",
+            "Divine ranging potion(4)", "Extended super antifire(4)", "Cooked karambwan", "Diamond dragon bolts (e)",
+            "Dragon scimitar", "Fire cape", "Dragon defender", "Rune pouch", "Lockpick", "Dodgy necklace"]
+
+    def _gear(self):
+        """Gear for the Setups page: added to the latest bank snapshot once (IDs from the Wiki)."""
+        from . import setups
+        known = setups.load().get("items", {})
+        bank = None
+        for f in sorted(os.listdir(self.folder)):
+            if f.endswith(".jsonl"):
+                with open(os.path.join(self.folder, f), encoding="utf-8") as fh:
+                    for line in fh:
+                        e = json.loads(line)
+                        if e.get("type") == "container" and e.get("container") == "bank":
+                            bank = e["items"]
+        items = [list(x) for x in bank or []]
+        have = {x[0] for x in items}
+        for n in self.GEAR:
+            info = known.get(n.lower())
+            if info and info["id"] not in have:
+                items.append([info["id"], 30 if "potion" in n or "karambwan" in n or "antifire" in n else
+                              500 if "bolts" in n else 1])
+        self._write(time.time() - 120, "container", container="bank", items=items)
 
     # Writing --------------------------------------------------------------------------
     def _write(self, t, etype, **fields):

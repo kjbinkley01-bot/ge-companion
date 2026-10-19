@@ -30,4 +30,10 @@ interface PanelHost
 
 	/** Asks for fresh data now. */
 	void refresh();
+
+	/** Names of the setups in the Inventory Setups plugin; empty when it is not installed. */
+	List<String> inventorySetups();
+
+	/** Opens a setup in the Inventory Setups plugin, which filters the bank to it. */
+	void openInventorySetup(String name);
 }

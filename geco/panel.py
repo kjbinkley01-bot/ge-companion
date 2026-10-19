@@ -5,6 +5,7 @@ net worth, market prices and coach notes for those slots, a looked up item in de
 ideas you can afford, the watchlist, the account summary, average costs for the bank tooltip,
 and new notifications. Display only: nothing here acts on the game.
 """
+import json
 import time
 
 from . import account, coach, features, guard, networth, news
@@ -163,6 +164,16 @@ def build(app, acct=None, item=None, slot_items=(), since_nid=0, now=None):
                 "shopping": [{"id": x["id"], "name": x["name"], "buy": x["buy"], "cost": x["cost"]} for x in p["shopping"] if x["buy"]][:8],
                 "shoppingCost": p["shoppingCost"],
             }
+            # The next step's setup, ready to paste into Inventory Setups.
+            from . import setups
+            keys, _ = setups.plan_keys(D, E, cfg, acct, plan=p)
+            if keys:
+                k0 = min(keys, key=lambda k: k[2])
+                st = setups.build(D, E, k0[0], acct=acct)
+                out["goal"]["setup"] = {"key": st["key"], "name": st["name"], "have": st["haveCount"], "count": st["count"],
+                                        "missing": [x["name"] for x in st["gaps"] if x.get("name")][:4],
+                                        "portable": json.dumps(setups.portable(st), separators=(",", ":"))}
+                out["goal"]["setupCount"] = len(keys)
     except Exception as e:  # noqa: BLE001
         out["goal"] = {"error": str(e)}
     # Account.

@@ -42,7 +42,9 @@ import net.runelite.client.Notifier;
 import net.runelite.client.RuneLite;
 import net.runelite.client.callback.ClientThread;
 import net.runelite.client.config.ConfigManager;
+import net.runelite.client.eventbus.EventBus;
 import net.runelite.client.eventbus.Subscribe;
+import net.runelite.client.events.PluginMessage;
 import net.runelite.client.game.ItemManager;
 import net.runelite.client.game.ItemStack;
 import net.runelite.client.plugins.Plugin;
@@ -140,6 +142,9 @@ public class BankstandingPlugin extends Plugin
 
 	@Inject
 	private Notifier notifier;
+
+	@Inject
+	private EventBus eventBus;
 
 	@Inject
 	private OverlayManager overlayManager;
@@ -421,6 +426,27 @@ public class BankstandingPlugin extends Plugin
 	/** What the panel can ask of the plugin. Nothing here touches the game. */
 	private class Host implements PanelHost
 	{
+		// Inventory Setups' plugin message API (namespace "inventory-setups"): "get-setups" fills the
+		// collection before post() returns, and "view" opens a setup by name. Setups themselves are
+		// added through that plugin's own Import, since it has no message for adding one.
+		@Override
+		public List<String> inventorySetups()
+		{
+			List<String> names = new ArrayList<>();
+			Map<String, Object> data = new HashMap<>();
+			data.put("setups", names);
+			eventBus.post(new PluginMessage("inventory-setups", "get-setups", data));
+			return names;
+		}
+
+		@Override
+		public void openInventorySetup(String name)
+		{
+			Map<String, Object> data = new HashMap<>();
+			data.put("setup", name);
+			eventBus.post(new PluginMessage("inventory-setups", "view", data));
+		}
+
 		@Override
 		public void icon(int itemId, int quantity, JLabel target)
 		{

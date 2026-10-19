@@ -422,6 +422,20 @@ def make_handler(app):
                 for c in cats:
                     c["names"] = [(E.mapping.get(i) or {}).get("name") for i in c["items"]]
                 return self._send(200, {"categories": cats})
+            if path == "/api/setups":
+                from . import setups
+                return self._send(200, setups.catalog(D, E, app.cfg, acct=q.get("acct") or None))
+            if path == "/api/setups/one":
+                from . import setups
+                try:
+                    st = setups.build(D, E, q["key"], acct=q.get("acct") or None)
+                except (KeyError, IndexError, ValueError):
+                    return self._send(404, {"error": "unknown setup"})
+                st["portable"] = json.dumps(setups.portable(st), separators=(",", ":"))
+                return self._send(200, st)
+            if path == "/api/setups/items":
+                from . import setups
+                return self._send(200, setups.search_items(E, setups.load(D).get("items"), q.get("q")))
             if path == "/api/planner/catalog":
                 from . import planner
                 return self._send(200, dict(planner.goals_catalog(D), active=planner.active(D)))
@@ -560,6 +574,32 @@ def make_handler(app):
             path, q = self._qs()
             b = self._json_body()
             now = int(time.time())
+            if path == "/api/setups/custom":
+                from . import setups
+                sid = setups.custom_save(D, b.get("id"), b.get("name"), b.get("data") or {}, now)
+                return self._send(200, {"id": sid, "key": f"mine|{sid}"})
+            if path == "/api/setups/custom/delete":
+                from . import setups
+                setups.custom_delete(D, b["id"])
+                return self._send(200, {"ok": True})
+            if path == "/api/setups/copy":
+                # A Wiki or quest setup as your own set, to edit.
+                from . import setups
+                st = setups.build(D, E, b["key"])
+                sid = setups.custom_save(D, None, b.get("name") or st["name"], setups.to_custom(st), now)
+                return self._send(200, {"id": sid, "key": f"mine|{sid}"})
+            if path == "/api/setups/file":
+                # Several setups in one file for Inventory Setups' Mass Import.
+                from . import setups
+                ports = []
+                for key in b.get("keys") or []:
+                    try:
+                        ports.append(setups.portable(setups.build(D, E, key)))
+                    except (KeyError, IndexError, ValueError):
+                        continue
+                folder = E.live_folder()
+                out = setups.export_file(folder, b.get("name") or "Bankstanding setups", ports)
+                return self._send(200, {"path": out, "count": len(ports)})
             if path == "/api/planner/goal":
                 from . import planner
                 goal = {k: b[k] for k in ("type", "name", "skill", "level") if b.get(k)}

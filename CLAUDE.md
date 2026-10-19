@@ -71,7 +71,10 @@ A free alternative to GE Tracker premium, built only on public, read-only data.
   changes, login and the GE item (varp TRADINGPOST_SEARCH, `followGeItem`), debounced; keeps
   the last answer 10 minutes marked stale, else falls back to RuneLite prices. `PanelHost`
   separates the panel from RuneLite services (watch and targets POST to the app; dashboard
-  links open `/?item=ID`, which the dashboard opens in the Terminal). `BankCostOverlay` adds
+  links open `/?item=ID`, which the dashboard opens in the Terminal; `/?setup=KEY` opens a
+  setup). The Goal tab's setup card copies the next step's setup and, through Inventory Setups'
+  PluginMessage API (namespace `inventory-setups`: `get-setups`, `view`), opens it there once
+  imported. That changes RuneLite UI only, never the game. `BankCostOverlay` adds
   the bank hover tooltip. RuneScape fonts lack triangles, so `Ui.Triangle` draws them.
   `gradlew previewPanel -Papp=... -Pout=...` renders each tab to PNG from a running app.
 * `geco/quests.py`: quest data from the Wiki (MediaWiki API: Quests and Miniquests category
@@ -114,6 +117,23 @@ A free alternative to GE Tracker premium, built only on public, read-only data.
   (skill tasks' `xp` is XP still needed). Active goal in kv
   `planner_goal`. Endpoints `/api/planner/catalog`, `/api/planner`, POST `/api/planner/goal`.
   Quest steps are left to Quest Helper. Display only.
+* `geco/setups.py`: setups for the Inventory Setups plugin. Boss strategy pages (`<Boss>/Strategies`
+  for `access.BOSSES`, one request): `{{Recommended equipment}}` per style (slotN tiers, best
+  first; styles with under 4 slots are room swaps and skipped), example `{{Equipment}}`,
+  `{{Inventory}}` (positional or numbered, `Name\qty`, `{{Cheap food}}` placeholders) and
+  `{{Rune pouch}}` grouped by tab label and matched to a style. Item IDs: GE mapping, plus every
+  referenced name's Wiki infobox (all version IDs, so degraded or charged copies count; slot from
+  Infobox Bonuses; sentence-case retry), 50 a request. Kv `setups_wiki`, snapshot
+  `geco/setups_snapshot.json`. Fitting (`holdings_live`, all containers): best owned tier per
+  slot, else `budget` (cheapest in the lowest tier sold) and `best`; `upgrade` is the next tier up.
+  Wiki stacks (qty 10,000+) mean any amount. Keys `boss|Name|i`, `quest|Name`, `method|Skill|Name`,
+  `mine|id` (table `setups_custom`). `portable()` writes InventorySetupPortable JSON (inv 28,
+  eq 14 by EquipmentInventorySlot, rp, afi, hc "#AARRGGBB", fuzzy items, a zig-zag layout);
+  unowned slots hold the budget pick. Inventory Setups rewrites its stored setups from memory, so
+  never write its config: setups go in through its Import (one) or Mass Import (a file from
+  `/api/setups/file`, written to `<plugin folder>/setups/`). Verified against its own classes.
+* Data versions: `quests.VERSION`, `skillguides.VERSION` and `setups.VERSION` are stored with the
+  data; a stored copy from another version is ignored (snapshot used) and fetched again at once.
 * `geco/account.py`: ingests plugin files incrementally (byte offsets, whole lines only), keeps
   latest GE offers, reconstructs fills from cumulative offer changes, FIFO matches them into
   automatic flip log rows (`flips.source='auto'`, rebuilt each time; `flip_ignore` opts out).
@@ -244,7 +264,8 @@ cycles, watchlist) and Wealth tabs, bank cost tooltip and notifications; Cycles 
 and weekly buy-low sell-high windows, tested on unseen days).
 v8: quest and goal planner (Wiki quest data, guide based time estimates scaled to your pace,
 boss access, skill training and boosts from the Wiki's training guides, ordered plan, shopping
-list), plugin quest and level events, panel Goal tab.
+list), plugin quest and level events, panel Goal tab; Setups page (Wiki boss, skilling and quest
+setups fitted to your bank, custom sets, export to Inventory Setups).
 Open questions to verify in game: whether a sell offer's `spent` is before or after tax
 (`account.sell_split` handles both), how promptly collection box containers update, and whether every `Quest` enum name matches
 the Wiki title (`quests.norm` covers "The" and "(quest)").

@@ -471,6 +471,7 @@ const PAGE_ICONS = {
   flips: "M7 4v14 M3 14l4 4 4-4 M17 20V6 M13 10l4-4 4 4",
   cycles: "M2 12c2.5-6 5.5-6 8 0s5.5 6 8 0 M18 12c1-2.4 2.2-3.6 4-4 M6 18v3 M14 3v3",
   planner: "M4 4h16v16H4z M8 9l2 2 4-4 M8 15h8",
+  setups: "M6 3h12v4H6z M4 9h16v12H4z M9 13h6 M9 17h6",
   watch: "M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z",
   alerts: "M6 16v-5a6 6 0 0 1 12 0v5l2 2H4z M10 21h4",
   market: "M4 20V10 M10 20V4 M16 20v-8 M22 20H2",
@@ -489,7 +490,7 @@ const PAGE_GROUPS = [
   ["Trade", [["terminal", "Terminal"], ["flips", "Flip finder"], ["cycles", "Cycles"], ["watch", "Watchlist"], ["alerts", "Alerts"]]],
   ["Market", [["market", "Market"], ["movers", "Movers"], ["news", "News"]]],
   ["Research", [["forecast", "Forecast"], ["backtest", "Backtest"]]],
-  ["Quests and goals", [["planner", "Planner"]]],
+  ["Quests and goals", [["planner", "Planner"], ["setups", "Setups"]]],
   ["Skilling and tools", [["money", "Money making"], ["alch", "High alch"], ["decant", "Decanting"], ["account", "Account"], ["settings", "Settings"]]],
 ];
 const PAGE_LABEL = Object.fromEntries(PAGE_GROUPS.flatMap(([, p]) => p));
@@ -2948,7 +2949,7 @@ function taskCard(t, i) {
       ${questXpLine(t)}
       ${t.other && t.other.length ? `<div class="small">${t.other.map((o) => o.met ? `<span class="pos">${arrow(1)}</span> <span class="muted">${esc(o.text)}</span>` : `<span class="warn-txt">${esc(o.text)}</span>`).join("<br>")}</div>` : ""}
       ${t.items && t.items.length ? `<details class="small"><summary class="muted">${t.items.length} items to bring</summary>${t.items.map(esc).join(", ")}</details>` : ""}
-      <div class="small pl-links"><a href="${esc(t.guide)}" target="_blank" rel="noopener">Quick guide</a> · <a href="${esc(t.wiki)}" target="_blank" rel="noopener">Wiki</a> · <span class="muted">Steps in game: Quest Helper, "${esc(t.title)}"</span></div></div></div>`;
+      <div class="small pl-links"><a href="${esc(t.guide)}" target="_blank" rel="noopener">Quick guide</a> · <a href="${esc(t.wiki)}" target="_blank" rel="noopener">Wiki</a>${t.items && t.items.length ? ` · <a class="pl-setup" data-setup="${esc("quest|" + t.title)}">Setup</a>` : ""} · <span class="muted">Steps in game: Quest Helper, "${esc(t.title)}"</span></div></div></div>`;
   }
   if (t.type === "boost") {
     return `<div class="pl-task pl-t-boost"><div class="pl-num">${i}</div><div class="pl-body"><div class="pl-top"><b>${esc(t.title)}</b><span class="pl-time">${t.gp ? gp(t.gp) + " gp" : ""}</span></div>
@@ -2958,7 +2959,7 @@ function taskCard(t, i) {
   const cost = (g) => (g == null ? " · cost not listed" : g > 0.05 ? ` · about ${gp(Math.round(g * 100) / 100)} gp/xp` : g < -0.05 ? " · makes money" : " · free");
   const wl = (u, label) => (u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(label)}</a>` : esc(label));
   const segs = (t.segments || []).map((sg) => `<div class="pl-st"><span class="pl-lv">${sg.from} to ${sg.to}</span>
-      <div><b>${sg.method ? wl(sg.url, sg.method) : "No method found here"}</b> <span class="muted">· ${gp(sg.xp)} XP${sg.xph ? ` at about ${short(sg.xph)} XP/h` : ""}${cost(sg.gpPerXp)}</span>
+      <div><b>${sg.method ? wl(sg.url, sg.method) : "No method found here"}</b>${sg.hasSetup ? ` <a class="pl-setup small" data-setup="${esc(`method|${t.skill}|${sg.method}`)}">Setup</a>` : ""} <span class="muted">· ${gp(sg.xp)} XP${sg.xph ? ` at about ${short(sg.xph)} XP/h` : ""}${cost(sg.gpPerXp)}</span>
       ${sg.summary ? `<div class="muted">${esc(sg.summary)}</div>` : ""}
       ${sg.notes && sg.notes.length ? `<div class="muted">${sg.notes.map(esc).join(" · ")}</div>` : ""}
       ${sg.items && sg.items.length ? `<details><summary class="muted">${sg.items.length} items in the Wiki's setup</summary>${sg.items.map(esc).join(", ")}</details>` : ""}</div>
@@ -3031,11 +3032,197 @@ renderers.planner = async function (host) {
       </div>
     </div>`;
   bindRowClicks(out);
+  $$("[data-setup]", out).forEach((a) => (a.onclick = (e) => { e.preventDefault(); showSetup(a.dataset.setup); }));
   if ($("#plWatch", out)) $("#plWatch", out).onclick = async () => {
     for (const s of p.shopping.filter((x) => x.buy && !S.watch.has(x.id))) { await api("/api/watchlist", { method: "POST", body: { id: s.id } }); S.watch.add(s.id); }
     toast("Watching", "Every item on the shopping list is on your watchlist.");
   };
 };
+
+// Setups: gear and inventories for the Inventory Setups plugin ------------------------
+const ST = Object.assign({ key: null, q: "", open: {} }, store.get("st", {}));
+let ST_CAT = null;
+let ST_EDIT = null; // the set being built or edited: {id, name, notes, eq: {slot: item}, inv: [item|null] x28, sel}
+const ST_WEAR = [[null, "head", null], ["cape", "neck", "ammo"], ["weapon", "body", "shield"], [null, "legs", null], ["hands", "feet", "ring"]];
+const ST_SLOT = { head: "Head", cape: "Cape", neck: "Neck", ammo: "Ammo", weapon: "Weapon", body: "Body", shield: "Shield", legs: "Legs", hands: "Hands", feet: "Feet", ring: "Ring" };
+function showSetup(key) { ST.key = key; ST_EDIT = null; store.set("st", ST); showTab("setups"); }
+function stOwn(r) {
+  if (r.count == null) return "";
+  const f = r.count ? r.have / r.count : 0;
+  return `<span class="st-own" title="You own ${r.have} of ${r.count} items"><i style="width:${Math.round(f * 100)}%"></i></span>`;
+}
+function stRow(key, title, sub, r) {
+  return `<button class="st-row ${ST.key === key ? "on" : ""}" data-k="${esc(key)}"><span class="st-t">${esc(title)}</span>${sub ? `<span class="muted small">${esc(sub)}</span>` : ""}${r ? stOwn(r) : ""}</button>`;
+}
+function stImg(it) {
+  if (!it) return "";
+  const alt = `<span class="st-sl st-alt"${it.icon ? ` style="display:none"` : ""}>${esc((it.name || "").slice(0, 18))}</span>`;
+  return (it.icon ? `<img alt="" src="${esc(iconUrl(it.icon))}" onerror="this.style.display='none';this.nextElementSibling.style.display='block'">` : "") + alt;
+}
+async function stCopy(text) {
+  try { await navigator.clipboard.writeText(text); return true; } catch (e) { /* fall back below */ }
+  const ta = document.createElement("textarea");
+  ta.value = text; document.body.appendChild(ta); ta.select();
+  const ok = document.execCommand("copy"); ta.remove(); return ok;
+}
+function stDownload(name, data) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([data], { type: "application/json" }));
+  a.download = name.replace(/[^A-Za-z0-9]+/g, "_") + ".json"; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+renderers.setups = async function (host) {
+  host.innerHTML = `<h2>Setups</h2>
+    <p class="lede">Gear and inventories for the Inventory Setups plugin, fitted to what you own. Boss setups use the Wiki's ranked gear for each slot and pick the best you have; skilling setups come from the training guides and quest setups from the items to bring. Copy one and use Import setup in Inventory Setups, or save a file of several for its Mass Import. Your own sets are built here too.</p>
+    <div class="st-grid"><div class="card st-list" id="stList"><div class="muted small">Loading...</div></div><div id="stOut"></div></div>`;
+  try { ST_CAT = await api("/api/setups"); } catch (e) { $("#stList", host).innerHTML = `<div class="notice">${esc(e.message)}</div>`; return; }
+  if (!ST.key) ST.key = (ST_CAT.plan[0] || {}).key || (ST_CAT.bosses[0] && ST_CAT.bosses[0].styles[0].key);
+  stList(host);
+  stDetail(host);
+};
+function stList(host) {
+  const c = ST_CAT;
+  const q = ST.q.toLowerCase();
+  const quests = c.quests.filter((x) => !q || x.title.toLowerCase().includes(q)).slice(0, 40);
+  const bossOpen = (b) => b.styles.some((s) => s.key === ST.key) || ST.open[b.boss];
+  $("#stList", host).innerHTML = `
+    ${c.accountKnown ? "" : `<div class="notice soft small">Your bank isn't known yet, so nothing shows as owned. Open your bank once with the RuneLite plugin running.</div>`}
+    ${c.plan.length ? `<div class="st-grp"><div class="section-head"><h4>For your plan</h4><button class="btn small" id="stPlanFile" title="One file with every setup in your plan, for Inventory Setups' Mass Import">File for Mass Import</button></div><div class="muted small">${esc(c.planLabel || "")}</div>${c.plan.map((r) => stRow(r.key, r.title, null, r)).join("")}</div>` : ""}
+    <div class="st-grp"><div class="section-head"><h4>My sets</h4><button class="btn small" id="stNew">New set</button></div>${c.mine.length ? c.mine.map((r) => stRow(r.key, r.title, null, r)).join("") : `<div class="muted small">None yet. Start one here, or copy any setup below and change it.</div>`}</div>
+    <div class="st-grp"><h4>Bosses and raids</h4>${c.bosses.map((b) => `<details class="st-boss" data-b="${esc(b.boss)}" ${bossOpen(b) ? "open" : ""}><summary>${esc(b.boss)} <span class="muted small">${b.styles.length}</span></summary>${b.styles.map((s) => stRow(s.key, s.style, null, s)).join("")}</details>`).join("")}</div>
+    <div class="st-grp"><h4>Skilling</h4>${c.skilling.map((m) => stRow(m.key, m.method, `${m.skill} ${m.lo} to ${m.hi}`)).join("")}</div>
+    <div class="st-grp"><h4>Quests</h4><input class="input" id="stQ" placeholder="Find a quest" value="${esc(ST.q)}">${quests.map((r) => stRow(r.key, r.title, `${r.items} items`)).join("")}</div>`;
+  $$(".st-row", host).forEach((b) => (b.onclick = () => { ST.key = b.dataset.k; ST_EDIT = null; store.set("st", ST); stList(host); stDetail(host); }));
+  $$(".st-boss", host).forEach((d) => d.addEventListener("toggle", () => { ST.open[d.dataset.b] = d.open; store.set("st", ST); }));
+  const qi = $("#stQ", host);
+  qi.oninput = () => { ST.q = qi.value; store.set("st", ST); const pos = qi.selectionStart; stList(host); const n = $("#stQ", host); n.focus(); n.setSelectionRange(pos, pos); };
+  $("#stNew", host).onclick = () => { ST_EDIT = { id: null, name: "My setup", notes: "", eq: {}, inv: Array(28).fill(null), sel: null }; stDetail(host); };
+  if ($("#stPlanFile", host)) $("#stPlanFile", host).onclick = async () => {
+    const r = await api("/api/setups/file", { method: "POST", body: { keys: c.plan.map((x) => x.key), name: c.planLabel || "Plan" } });
+    toast("Saved for Mass Import", `${r.count} setups in ${r.path}. In Inventory Setups choose Mass Import Setups and pick this file.`);
+  };
+}
+function stSlotCell(slot, f, edit) {
+  if (!slot) return `<div class="st-slot blank"></div>`;
+  const it = f && (f.item || f.budget);
+  const own = f && f.item && !f.missing;
+  const cls = !f ? "none" : own ? "own" : "miss";
+  const sel = edit && ST_EDIT.sel && ST_EDIT.sel.slot === slot ? " sel" : "";
+  const tip = it ? `${ST_SLOT[slot]}: ${it.name}${own ? (f.tiers > 1 ? `, tier ${f.item.tier} of ${f.tiers}` : "") : f.item ? " (not in your bank)" : " (you don't own this; cheapest good pick)"}` : ST_SLOT[slot];
+  return `<button class="st-slot ${cls}${sel}" data-slot="${slot}" title="${esc(tip)}">${it ? stImg(it) : `<span class="st-sl">${ST_SLOT[slot]}</span>`}${own && f.tiers > 1 ? `<span class="st-tier">${f.item.tier}/${f.tiers}</span>` : ""}</button>`;
+}
+function stGear(eq, edit) { return `<div class="st-gear">${ST_WEAR.map((row) => row.map((slot) => stSlotCell(slot, slot && eq[slot], edit)).join("")).join("")}</div>`; }
+function stInv(cells, edit) {
+  return `<div class="st-inv">${cells.map((c, i) => {
+    const sel = edit && ST_EDIT.sel && ST_EDIT.sel.inv === i ? " sel" : "";
+    if (!c) return `<button class="st-cell${sel}" data-inv="${i}"></button>`;
+    const cls = c.owned === false || c.unknown ? "miss" : "own";
+    const tip = `${c.name}${c.qty > 1 ? ` x${gp(c.qty)}` : ""}${c.have != null ? `, you have ${gp(c.have)}` : ""}${c.unknown ? " (not matched to an item)" : ""}`;
+    return `<button class="st-cell ${cls}${sel}" data-inv="${i}" title="${esc(tip)}">${stImg(c)}${c.qty > 1 ? `<span class="q">${short(c.qty)}</span>` : ""}</button>`;
+  }).join("")}</div>`;
+}
+async function stDetail(host) {
+  const out = $("#stOut", host);
+  if (ST_EDIT) return stBuilder(host);
+  if (!ST.key) { out.innerHTML = `<div class="card muted">Pick a setup on the left.</div>`; return; }
+  out.innerHTML = `<div class="card muted small">Fitting to your bank...</div>`;
+  let s;
+  try { s = await api("/api/setups/one?key=" + encodeURIComponent(ST.key)); } catch (e) { out.innerHTML = `<div class="notice">${esc(e.message)}</div>`; return; }
+  const gearGaps = s.gaps.filter((g) => g.slot !== "inventory");
+  const invGaps = s.gaps.filter((g) => g.slot === "inventory");
+  const fill = gearGaps.reduce((a, g) => a + (g.price || 0), 0) + invGaps.reduce((a, g) => a + (g.price || 0) * (g.qty || 1), 0);
+  out.innerHTML = `
+    <div class="card st-head"><div><h3 style="margin:0">${esc(s.title)}${s.subtitle ? ` <span class="muted">${esc(s.subtitle)}</span>` : ""}</h3>
+      <div class="small muted">${s.count ? `You own ${s.haveCount} of ${s.count} items` : "Empty"}${fill ? ` · about ${short(fill)} to fill the rest` : ""}${s.url ? ` · <a href="${esc(s.url)}" target="_blank" rel="noopener">Wiki</a>` : ""}</div></div>
+      <div class="st-actions"><button class="btn primary" id="stCopy" title="Then in RuneLite: Inventory Setups, Import setup, paste">Copy for Inventory Setups</button><button class="btn" id="stDl" title="A file for Inventory Setups' Mass Import">Download</button>
+      ${s.kind === "mine" ? `<button class="btn" id="stEdit">Edit</button><button class="btn" id="stDel">Delete</button>` : `<button class="btn" id="stMine" title="Copy it to My sets and change anything">Save as my set</button>`}</div></div>
+    <div class="st-body">
+      <div class="card"><h4>Equipment</h4>${stGear(s.eq)}<div id="stSlotInfo" class="small muted">Click a slot to see every option the Wiki lists for it.</div></div>
+      <div class="card"><h4>Inventory</h4>${stInv(s.inv)}
+        ${s.rp.length ? `<h4>Rune pouch</h4><div class="st-inv st-rp">${s.rp.map((c) => `<span class="st-cell ${c.owned ? "own" : "miss"}" title="${esc(c.name)}">${stImg(c)}</span>`).join("")}</div>` : ""}
+        ${s.extra.length || (s.loose || []).length ? `<h4>Also bring</h4><p class="small">${s.extra.concat(s.loose || []).map((c) => esc(c.name) + (c.qty > 1 ? ` x${gp(c.qty)}` : "")).join(", ")}</p>` : ""}</div>
+      <div class="card"><div class="section-head"><h4 style="margin:0">To get</h4>${s.gaps.some((g) => g.id && g.price) ? `<button class="btn small" id="stWatch">Watch all</button>` : ""}</div>
+        ${gearGaps.length ? `<table class="st-gaps"><tbody>${gearGaps.map((g) => `<tr data-id="${g.id || ""}"><td class="muted">${esc(ST_SLOT[g.slot] || g.slot)}</td><td>${esc(g.name || "?")}${g.best ? `<div class="muted small">best: ${esc(g.best.name)} (${short(g.best.price)})</div>` : ""}</td><td class="num">${g.price ? short(g.price) : `<span class="muted small">not on the GE</span>`}</td></tr>`).join("")}</tbody></table>` : Object.keys(s.eq).length ? `<p class="small pos">${arrow(1)}You have something for every slot.</p>` : ""}
+        ${invGaps.length ? `<h4>Supplies</h4><table class="st-gaps"><tbody>${invGaps.slice(0, 14).map((g) => `<tr data-id="${g.id || ""}"><td>${esc(g.name)}${g.qty > 1 ? ` <span class="muted">x${gp(g.qty)}</span>` : ""}</td><td class="num">${g.stack ? `<span class="muted small">a stack</span>` : g.price ? short(g.price * (g.qty || 1)) : `<span class="muted small">${g.unknown ? "not matched" : "not on the GE"}</span>`}</td></tr>`).join("")}</tbody></table>` : ""}
+        ${s.upgrades.length ? `<h4>Upgrades</h4><table class="st-gaps"><tbody>${s.upgrades.map((u) => `<tr data-id="${u.id}"><td class="muted">${esc(ST_SLOT[u.slot] || u.slot)}</td><td>${esc(u.from)} <span class="muted">to</span> ${esc(u.to)}</td><td class="num">${short(u.price)}</td></tr>`).join("")}</tbody></table>` : ""}</div>
+    </div>
+    <p class="small muted">${esc(s.notes || "")} Gear you don't own goes in as the cheapest good pick, so Inventory Setups highlights it until you have it.</p>`;
+  bindRowClicks(out);
+  $$(".st-slot[data-slot]", out).forEach((b) => (b.onclick = () => {
+    const f = s.eq[b.dataset.slot];
+    $("#stSlotInfo", out).innerHTML = !f ? `${ST_SLOT[b.dataset.slot]}: nothing listed.` : `<b>${ST_SLOT[b.dataset.slot]}</b>${f.options.map((o) => `<div class="st-opt ${o.owned ? "pos" : ""}">${f.tiers > 1 ? `<span class="muted">${o.tier}.</span> ` : ""}${esc(o.name)}${o.owned ? ` ${arrow(1)}yours` : o.price ? ` <span class="muted">${short(o.price)}</span>` : ` <span class="muted">not on the GE</span>`}</div>`).join("")}`;
+  }));
+  $("#stCopy", out).onclick = async () => toast(await stCopy(s.portable) ? "Copied" : "Copy failed", "In RuneLite: open Inventory Setups, choose Import setup and paste.");
+  $("#stDl", out).onclick = () => stDownload(s.name, "[" + s.portable + "]");
+  if ($("#stWatch", out)) $("#stWatch", out).onclick = async () => {
+    for (const g of s.gaps.filter((x) => x.id && x.price && !S.watch.has(x.id))) { await api("/api/watchlist", { method: "POST", body: { id: g.id } }); S.watch.add(g.id); }
+    toast("Watching", "Everything you're missing for this setup is on your watchlist.");
+  };
+  if ($("#stMine", out)) $("#stMine", out).onclick = async () => {
+    const r = await api("/api/setups/copy", { method: "POST", body: { key: s.key } });
+    ST_CAT = await api("/api/setups"); ST.key = r.key; store.set("st", ST); stList(host); stDetail(host);
+  };
+  if ($("#stEdit", out)) $("#stEdit", out).onclick = () => {
+    ST_EDIT = { id: s.id, name: s.name, notes: s.notes || "", sel: null, inv: s.inv.map((c) => c && c.id ? { id: c.id, name: c.name, icon: c.icon, qty: c.qty } : null), eq: {} };
+    for (const [slot, f] of Object.entries(s.eq)) if (f.item) ST_EDIT.eq[slot] = { id: f.item.id, name: f.item.name, icon: f.item.icon };
+    stDetail(host);
+  };
+  if ($("#stDel", out)) $("#stDel", out).onclick = async () => {
+    if (!confirm(`Delete ${s.name}?`)) return;
+    await api("/api/setups/custom/delete", { method: "POST", body: { id: s.id } });
+    ST_CAT = await api("/api/setups"); ST.key = null; stList(host); stDetail(host);
+  };
+}
+function stBuilder(host) {
+  const out = $("#stOut", host);
+  const E = ST_EDIT;
+  const eqView = {};
+  for (const [slot, it] of Object.entries(E.eq)) eqView[slot] = { item: it, tiers: 1 };
+  const invView = E.inv.map((c) => c && { ...c, owned: true });
+  const sel = E.sel;
+  const selLabel = !sel ? "Pick a slot or an inventory square, then search for an item." : sel.slot ? `${ST_SLOT[sel.slot]} slot` : `Inventory square ${sel.inv + 1}`;
+  const cur = sel && (sel.slot ? E.eq[sel.slot] : E.inv[sel.inv]);
+  out.innerHTML = `
+    <div class="card st-head"><div style="flex:1"><label class="field wide"><span>Name</span><input class="input" id="stName" value="${esc(E.name)}"></label></div>
+      <div class="st-actions"><button class="btn primary" id="stSave">Save</button><button class="btn" id="stCancel">Cancel</button></div></div>
+    <div class="st-body">
+      <div class="card"><h4>Equipment</h4>${stGear(eqView, true)}</div>
+      <div class="card"><h4>Inventory</h4>${stInv(invView, true)}</div>
+      <div class="card"><h4>${esc(selLabel)}</h4>
+        ${cur ? `<div class="small">${stImg(cur)} ${esc(cur.name)} ${sel.inv != null ? `<label class="field"><span>Quantity</span><input class="input" id="stQty" inputmode="numeric" value="${cur.qty || 1}"></label>` : ""}<button class="btn small" id="stClear">Clear</button></div>` : ""}
+        ${sel ? `<input class="input" id="stFind" placeholder="Search items (GE items and anything the Wiki setups use)"><div id="stHits" class="st-hits"></div>` : ""}
+        <label class="field wide" style="margin-top:8px"><span>Notes</span><textarea class="input" id="stNotes" rows="3">${esc(E.notes)}</textarea></label></div>
+    </div>`;
+  $$(".st-slot[data-slot]", out).forEach((b) => (b.onclick = () => { E.sel = { slot: b.dataset.slot }; stBuilder(host); $("#stFind", out) && $("#stFind", out).focus(); }));
+  $$(".st-cell[data-inv]", out).forEach((b) => (b.onclick = () => { E.sel = { inv: +b.dataset.inv }; stBuilder(host); $("#stFind", out) && $("#stFind", out).focus(); }));
+  $("#stName", out).oninput = (e) => (E.name = e.target.value);
+  $("#stNotes", out).oninput = (e) => (E.notes = e.target.value);
+  if ($("#stQty", out)) $("#stQty", out).onchange = (e) => { E.inv[sel.inv].qty = Math.max(1, parseInt(e.target.value.replace(/,/g, ""), 10) || 1); };
+  if ($("#stClear", out)) $("#stClear", out).onclick = () => { if (sel.slot) delete E.eq[sel.slot]; else E.inv[sel.inv] = null; stBuilder(host); };
+  const find = $("#stFind", out);
+  let timer = null;
+  if (find) find.oninput = () => {
+    clearTimeout(timer);
+    timer = setTimeout(async () => {
+      const hits = await api("/api/setups/items?q=" + encodeURIComponent(find.value));
+      $("#stHits", out).innerHTML = hits.map((h, i) => `<button class="st-hit" data-i="${i}">${stImg(h)}<span>${esc(h.name)}</span>${h.slot ? `<span class="muted small">${esc(ST_SLOT[h.slot] || h.slot)}</span>` : ""}</button>`).join("") || `<div class="muted small">No items match.</div>`;
+      $$(".st-hit", out).forEach((b) => (b.onclick = () => {
+        const h = hits[+b.dataset.i];
+        const it = { id: h.id, name: h.name, icon: h.icon, qty: 1 };
+        if (sel.slot) { E.eq[sel.slot] = it; E.sel = null; }
+        else { E.inv[sel.inv] = it; const next = E.inv.indexOf(null); E.sel = next >= 0 ? { inv: next } : null; }
+        stBuilder(host);
+        if ($("#stFind", out)) $("#stFind", out).focus();
+      }));
+    }, 180);
+  };
+  $("#stCancel", out).onclick = () => { ST_EDIT = null; stDetail(host); };
+  $("#stSave", out).onclick = async () => {
+    const data = { eq: Object.fromEntries(Object.entries(E.eq).map(([k, v]) => [k, v.id])), inv: E.inv.map((c) => (c ? [c.id, c.qty || 1] : null)), notes: E.notes };
+    const r = await api("/api/setups/custom", { method: "POST", body: { id: E.id, name: E.name, data } });
+    ST_EDIT = null; ST_CAT = await api("/api/setups"); ST.key = r.key; store.set("st", ST); stList(host); stDetail(host);
+  };
+}
 
 // Money making: recipes and item sets ---------------------------------------------
 const MM = Object.assign({ patient: true, skill: "all", hideRisky: true, q: "", setDir: "all", rates: {}, smithing: "" }, store.get("mm", {}));
@@ -4060,6 +4247,8 @@ async function loadMarket() {
       // Links from the RuneLite side panel: /?tab=planner opens a page, /?item=ID an item in the Terminal.
       const page = new URLSearchParams(location.search).get("tab");
       if (page && renderers[page]) { showTab(page); history.replaceState(null, "", location.pathname); }
+      const setupKey = new URLSearchParams(location.search).get("setup");
+      if (setupKey) { showSetup(setupKey); history.replaceState(null, "", location.pathname); }
       // Links from the RuneLite side panel: /?item=ID opens that item in the Terminal.
       const linked = +new URLSearchParams(location.search).get("item");
       if (linked > 0) { openTerminal(linked); history.replaceState(null, "", location.pathname); }

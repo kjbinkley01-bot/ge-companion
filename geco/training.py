@@ -171,7 +171,7 @@ def candidates(skill, guides=None):
         out.append({"name": m["name"], "lo": m["lo"], "hi": m["hi"], "curve": m.get("curve") or [], "wide": wide,
                     "typical": m.get("typical"), "gpPerXp": m.get("gpPerXp"), "req": m.get("req") or {},
                     "items": m.get("items") or [], "summary": m.get("summary") or "", "url": m.get("url"),
-                    "source": "wiki", "fastest": m.get("fastest")})
+                    "source": "wiki", "fastest": m.get("fastest"), "hasSetup": bool(m.get("setup"))})
     for t in METHODS.get(skill, []):
         twin = next((c for c in out if c["source"] == "wiki" and _words(c["name"]) & _words(t[0])), None)
         if twin:
@@ -276,6 +276,7 @@ def plan_skill(skill, level, xp, target, price, mode="fastest", measured=None, m
                          "gp": sg["xp"] * cost if cost is not None else None, "gpPerXp": cost,
                          "url": c.get("url") if c else None, "items": (c.get("items") or [])[:12] if c else [],
                          "summary": c.get("summary") if c else "", "source": c["source"] if c else None,
+                         "hasSetup": bool(c and c.get("hasSetup")),
                          "notes": ((c.get("req") or {}).get("notes") or [])[:3] if c else []})
     hours = sum(sg["hours"] for sg in out_segs if sg["hours"]) if all(sg["hours"] for sg in out_segs) else None
     source = "wiki" if all(sg["source"] == "wiki" for sg in out_segs) else "table"

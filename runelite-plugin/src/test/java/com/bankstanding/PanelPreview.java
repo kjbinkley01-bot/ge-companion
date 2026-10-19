@@ -156,6 +156,17 @@ public class PanelPreview
 			}
 
 			@Override
+			public List<String> inventorySetups()
+			{
+				return new ArrayList<>(java.util.Arrays.asList("Tears of Guthix"));
+			}
+
+			@Override
+			public void openInventorySetup(String name)
+			{
+			}
+
+			@Override
 			public void refresh()
 			{
 			}
