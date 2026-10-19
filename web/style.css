@@ -854,3 +854,28 @@ svg.cy-chart .cy-buy-t { fill: var(--pos); font-weight: 700; font-size: 12px; }
 svg.cy-chart .cy-sell-t { fill: var(--neg); font-weight: 700; font-size: 12px; }
 tr[data-cy] { cursor: pointer; }
 tr[data-cy].sel td { background: var(--accent-bg); }
+/* Planner */
+.pl-pick { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; margin-bottom: 10px; }
+.pl-pick .field.wide { flex: 1 1 320px; margin: 0; }
+.pl-grid { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(320px, 1fr); gap: 8px; align-items: start; }
+@media (max-width: 1000px) { .pl-grid { grid-template-columns: 1fr; } }
+.pl-tasks { display: flex; flex-direction: column; gap: 6px; }
+.pl-task { display: flex; gap: 10px; background: var(--surface); border-radius: 6px; padding: 10px 12px; border-left: 3px solid var(--series-2); }
+.pl-task.pl-t-skill { border-left-color: var(--series-1); }
+.pl-task.pl-t-boost { border-left-color: var(--warn); }
+.pl-num { color: var(--muted); font-variant-numeric: tabular-nums; min-width: 18px; padding-top: 1px; }
+.pl-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.pl-top { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.pl-time { margin-left: auto; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.pl-links a { color: var(--series-2); }
+.pl-bar { display: flex; height: 14px; border-radius: 4px; overflow: hidden; gap: 2px; margin-bottom: 6px; }
+.pl-seg { display: block; min-width: 3px; }
+.pl-seg.pl-quest { background: var(--series-2); }
+.pl-seg.pl-skill { background: var(--series-1); }
+.pl-seg.pl-boost { background: var(--warn); }
+.legend-inline i.pl-quest-k, .legend-inline i.pl-skill-k { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+.legend-inline i.pl-quest-k { background: var(--series-2); }
+.legend-inline i.pl-skill-k { background: var(--series-1); }
+.pl-req td, .pl-req th { padding: 5px 8px; }
+.pl-other { margin: 4px 0 0; padding-left: 18px; font-size: 13px; }
+.pl-other li { margin: 3px 0; }

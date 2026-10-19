@@ -54,6 +54,10 @@ CREATE TABLE IF NOT EXISTS trade_tags (acct TEXT NOT NULL, item INTEGER NOT NULL
     tag TEXT NOT NULL, PRIMARY KEY (acct, item, buy_ts));
 CREATE TABLE IF NOT EXISTS flip_ignore (acct TEXT NOT NULL, item INTEGER NOT NULL,
     PRIMARY KEY (acct, item));
+CREATE TABLE IF NOT EXISTS quest_state (acct TEXT NOT NULL, name TEXT NOT NULL, state INTEGER NOT NULL,
+    t INTEGER NOT NULL, started INTEGER, finished INTEGER, PRIMARY KEY (acct, name));
+CREATE TABLE IF NOT EXISTS progress (acct TEXT PRIMARY KEY, t INTEGER, qp INTEGER, combat INTEGER,
+    levels TEXT, levels_t INTEGER);
 """
 
 BUY_STATES = {"BUYING", "BOUGHT", "CANCELLED_BUY"}
@@ -134,9 +138,58 @@ def apply_events(db, events):
         elif kind == "loot":
             db.run("INSERT INTO loot (acct, t, source, kind, items) VALUES (?,?,?,?,?)",
                    (acct, t, e.get("source"), e.get("kind"), json.dumps(e.get("items") or [])))
+        elif kind == "quests":
+            apply_quests(db, acct, t, e)
+        elif kind == "levels":
+            db.run("INSERT INTO progress (acct, levels, combat, levels_t) VALUES (?,?,?,?) ON CONFLICT(acct) DO UPDATE "
+                   "SET levels=excluded.levels, combat=excluded.combat, levels_t=excluded.levels_t",
+                   (acct, json.dumps(e.get("levels") or {}), e.get("combat"), t))
         elif kind == "xp":
             db.run("INSERT OR REPLACE INTO xp_log (acct, t, skill, xp, level) VALUES (?,?,?,?,?)",
                    (acct, t, e.get("skill"), e.get("xp"), e.get("level")))
+
+
+def apply_quests(db, acct, t, e):
+    """Quest states (0 not started, 1 started, 2 finished) and quest points. A quest seen
+    moving from not started to started, or to finished, gets those times (for your pace)."""
+    old = {r["name"]: r for r in db.q("SELECT * FROM quest_state WHERE acct=?", (acct,))}
+    first = not old
+    rows = []
+    for name, st in (e.get("states") or {}).items():
+        st = int(st)
+        prev = old.get(name)
+        started = prev["started"] if prev else None
+        finished = prev["finished"] if prev else None
+        if not first:
+            was = prev["state"] if prev else 0
+            if was == 0 and st >= 1 and not started:
+                started = t
+            if was < 2 and st == 2 and not finished:
+                finished = t
+        rows.append((acct, name, st, t, started, finished))
+    db.conn.executemany("INSERT OR REPLACE INTO quest_state (acct, name, state, t, started, finished) VALUES (?,?,?,?,?,?)", rows)
+    db.conn.commit()
+    db.run("INSERT INTO progress (acct, t, qp) VALUES (?,?,?) ON CONFLICT(acct) DO UPDATE SET t=excluded.t, qp=excluded.qp",
+           (acct, t, e.get("qp")))
+
+
+def progress(db, acct):
+    """{qp, combat, levels {skill: (level, xp)}, quests {name: state}, t} for one account."""
+    p = db.one("SELECT * FROM progress WHERE acct=?", (acct,)) or {}
+    levels = {k: tuple(v) for k, v in json.loads(p.get("levels") or "{}").items()}
+    # Newer XP from the xp log (written as you train).
+    for r in db.q("SELECT skill, MAX(t) AS t, xp, level FROM xp_log WHERE acct=? GROUP BY skill", (acct,)):
+        if r["t"] and r["t"] > (p.get("levels_t") or 0):
+            levels[r["skill"]] = (r["level"], r["xp"])
+    states = {r["name"]: r["state"] for r in db.q("SELECT name, state FROM quest_state WHERE acct=?", (acct,))}
+    return {"qp": p.get("qp"), "combat": p.get("combat"), "levels": levels, "quests": states, "t": p.get("t"),
+            "known": bool(states or levels)}
+
+
+def quest_times(db, acct=None):
+    """Quests seen from start to finish: [(acct, name, started, finished)]."""
+    q = "SELECT acct, name, started, finished FROM quest_state WHERE started IS NOT NULL AND finished IS NOT NULL"
+    return db.q(q + (" AND acct=?" if acct else ""), (acct,) if acct else ())
 
 
 SESSION_GAP = 20 * 60

@@ -422,6 +422,16 @@ def make_handler(app):
                 for c in cats:
                     c["names"] = [(E.mapping.get(i) or {}).get("name") for i in c["items"]]
                 return self._send(200, {"categories": cats})
+            if path == "/api/planner/catalog":
+                from . import planner
+                return self._send(200, dict(planner.goals_catalog(D), active=planner.active(D)))
+            if path == "/api/planner":
+                from . import planner
+                goal = {k: q[k] for k in ("type", "name", "skill", "level") if q.get(k)} or planner.active(D)
+                if not goal:
+                    return self._send(200, {"goal": None})
+                return self._send(200, planner.build(D, E, app.cfg, goal, acct=q.get("acct") or None,
+                                                     mode=q.get("mode") or "fastest"))
             if path == "/api/cycles":
                 from . import cycles
                 kind = "weekly" if q.get("kind") == "weekly" else "daily"
@@ -550,6 +560,11 @@ def make_handler(app):
             path, q = self._qs()
             b = self._json_body()
             now = int(time.time())
+            if path == "/api/planner/goal":
+                from . import planner
+                goal = {k: b[k] for k in ("type", "name", "skill", "level") if b.get(k)}
+                planner.set_active(D, goal or None)
+                return self._send(200, {"active": planner.active(D)})
             if path == "/api/desktop":
                 # This PC: start with Windows, icons, and opening RuneLite with the plugin.
                 from . import desktop

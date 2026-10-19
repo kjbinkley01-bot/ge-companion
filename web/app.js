@@ -470,6 +470,7 @@ const PAGE_ICONS = {
   terminal: "M5 3v18 M3 7h4v8H3z M12 5v14 M10 9h4v6h-4z M19 3v16 M17 6h4v6h-4z",
   flips: "M7 4v14 M3 14l4 4 4-4 M17 20V6 M13 10l4-4 4 4",
   cycles: "M2 12c2.5-6 5.5-6 8 0s5.5 6 8 0 M18 12c1-2.4 2.2-3.6 4-4 M6 18v3 M14 3v3",
+  planner: "M4 4h16v16H4z M8 9l2 2 4-4 M8 15h8",
   watch: "M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z",
   alerts: "M6 16v-5a6 6 0 0 1 12 0v5l2 2H4z M10 21h4",
   market: "M4 20V10 M10 20V4 M16 20v-8 M22 20H2",
@@ -488,6 +489,7 @@ const PAGE_GROUPS = [
   ["Trade", [["terminal", "Terminal"], ["flips", "Flip finder"], ["cycles", "Cycles"], ["watch", "Watchlist"], ["alerts", "Alerts"]]],
   ["Market", [["market", "Market"], ["movers", "Movers"], ["news", "News"]]],
   ["Research", [["forecast", "Forecast"], ["backtest", "Backtest"]]],
+  ["Quests and goals", [["planner", "Planner"]]],
   ["Skilling and tools", [["money", "Money making"], ["alch", "High alch"], ["decant", "Decanting"], ["account", "Account"], ["settings", "Settings"]]],
 ];
 const PAGE_LABEL = Object.fromEntries(PAGE_GROUPS.flatMap(([, p]) => p));
@@ -2910,6 +2912,111 @@ renderers.cycles = async function (host) {
   if (CY.sel && rows.some((r) => r.id === CY.sel)) cycleDetail($("#cyDetail", host), CY.sel);
 };
 
+// Planner: everything between your account and a quest, boss or level, in order ------------
+const PL = Object.assign({ mode: "fastest", goal: null }, store.get("pl", {}));
+let PL_CAT = null;
+function hrs(h) {
+  if (h == null) return "-";
+  if (h < 1) return Math.max(1, Math.round(h * 60)) + " min";
+  return (h < 10 ? h.toFixed(1) : Math.round(h)) + " h";
+}
+function goalLabel(g) {
+  if (!g) return "";
+  return g.type === "grandmasters" ? "All grandmaster quests" : g.type === "boss" ? `${g.name} access` : g.type === "skill" ? `${g.level} ${g.skill}` : g.name;
+}
+function goalQuery(g) { return Object.entries(g).map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join("&"); }
+function planTimeline(p) {
+  const tasks = p.tasks.filter((t) => t.hours);
+  const total = tasks.reduce((s, t) => s + t.hours, 0) || 1;
+  return `<div class="pl-bar" role="img" aria-label="Time by task">${tasks.map((t) => `<span class="pl-seg pl-${t.type}" style="flex:${(t.hours / total).toFixed(4)}" title="${esc(t.title)}: ${hrs(t.hours)}"></span>`).join("")}</div>
+    <div class="legend-inline small"><span><i class="pl-quest-k"></i>Quests ${hrs(p.hours.quests)}</span><span><i class="pl-skill-k"></i>Training ${hrs(p.hours.skills)}</span></div>`;
+}
+function taskCard(t, i) {
+  if (t.type === "quest") {
+    const range = `${hrs(t.low / 60)} to ${hrs(t.high / 60)}`;
+    return `<div class="pl-task"><div class="pl-num">${i}</div><div class="pl-body">
+      <div class="pl-top"><b>${esc(t.title)}</b> <span class="tag">${esc(t.difficulty || "Quest")}</span>${t.state === 1 ? ` <span class="tag spike">Started</span>` : ""}${t.filler ? ` <span class="tag free" title="Added to reach the quest points needed">For quest points</span>` : ""}${t.gatedQp ? ` <span class="tag" title="Needs this many quest points to start">${t.gatedQp} QP</span>` : ""}<span class="pl-time" title="${t.estSource === "guide" ? "Estimated from the quick guide's length (steps, travel, fights, dialogue)" : "From the Wiki's length rating"}${p_pace_note()}">${hrs(t.hours)} <span class="muted small">${range}</span></span></div>
+      <div class="small muted">${esc(t.length || "")}${t.length ? " · " : ""}${t.qp ? `${t.qp} quest point${t.qp > 1 ? "s" : ""} · ` : ""}starts: ${esc(t.start || "-")}</div>
+      ${t.other && t.other.length ? `<div class="small">${t.other.map((o) => o.met ? `<span class="pos">${arrow(1)}</span> <span class="muted">${esc(o.text)}</span>` : `<span class="warn-txt">${esc(o.text)}</span>`).join("<br>")}</div>` : ""}
+      ${t.items && t.items.length ? `<details class="small"><summary class="muted">${t.items.length} items to bring</summary>${t.items.map(esc).join(", ")}</details>` : ""}
+      <div class="small pl-links"><a href="${esc(t.guide)}" target="_blank" rel="noopener">Quick guide</a> · <a href="${esc(t.wiki)}" target="_blank" rel="noopener">Wiki</a> · <span class="muted">Steps in game: Quest Helper, "${esc(t.title)}"</span></div></div></div>`;
+  }
+  if (t.type === "boost") {
+    return `<div class="pl-task pl-t-boost"><div class="pl-num">${i}</div><div class="pl-body"><div class="pl-top"><b>${esc(t.title)}</b><span class="pl-time">${t.gp ? gp(t.gp) + " gp" : ""}</span></div>
+      <div class="small muted">The requirement for ${esc(t.why)} can be boosted, so no training needed.</div></div></div>`;
+  }
+  if (t.unknown) return `<div class="pl-task"><div class="pl-num">${i}</div><div class="pl-body"><b>${esc(t.title)}</b><div class="small muted">Your ${esc(t.skill)} level isn't known yet: log in with the plugin running.</div></div></div>`;
+  const opts = (t.options || []).filter((o) => o.method !== t.method).slice(0, 3).map((o) => `${esc(o.method)} (${short(o.xph)}/h${o.gpPerXp ? `, ${o.gpPerXp > 0 ? gp(o.gpPerXp) + " gp/xp" : "profit"}` : ""})`).join(", ");
+  return `<div class="pl-task pl-t-skill"><div class="pl-num">${i}</div><div class="pl-body"><div class="pl-top"><b>${esc(t.title)}</b> <span class="tag">${esc(t.skill)}</span><span class="pl-time">${hrs(t.hours)}</span></div>
+    <div class="small">${esc(t.method || "No method in the table yet")} <span class="muted">· ${gp(t.xp)} XP at about ${short(t.xph)} XP/h ${t.rateSource === "yours" ? "(your measured rate)" : "(typical rate)"}${t.gp ? ` · costs about ${short(t.gp)}` : t.gp === 0 ? " · free" : ""}</span></div>
+    <div class="small muted">Needed for ${esc(t.why)}.${opts ? ` Other options: ${opts}.` : ""}</div></div></div>`;
+}
+let PL_LAST = null;
+function p_pace_note() { const p = PL_LAST && PL_LAST.pace; return p && p.n >= 2 ? `; scaled by your pace (x${p.factor.toFixed(2)} from ${p.n} quests)` : ""; }
+renderers.planner = async function (host) {
+  if (!PL_CAT) { try { PL_CAT = await api("/api/planner/catalog"); } catch (e) { host.innerHTML = `<div class="notice">${esc(e.message)}</div>`; return; } }
+  if (!PL.goal) PL.goal = PL_CAT.active || { type: "quest", name: "While Guthix Sleeps" };
+  host.innerHTML = `<h2>Planner</h2>
+    <p class="lede">Pick a quest, boss or level. The plan lists every quest still in the way (prerequisites first), any skills short of what's needed with the fastest way to train them, extra quests if you're short on quest points, and one shopping list priced from the GE. Times come from each quest's guide and the Wiki's length rating, and scale to your pace once the plugin has timed a few of your quests.</p>
+    <div class="pl-pick">
+      <label class="field wide"><span>Goal</span><input class="input" id="plSearch" list="plList" placeholder="A quest or boss, e.g. While Guthix Sleeps or Vorkath" value="${esc(goalLabel(PL.goal))}"></label>
+      <datalist id="plList">${PL_CAT.quests.map((q) => `<option value="${esc(q)}">`).join("")}${PL_CAT.bosses.map((b) => `<option value="${esc(b.name)} access">`).join("")}</datalist>
+      <div class="chips" style="margin:0"><button class="chip" data-g='{"type":"grandmasters"}'>All grandmaster quests</button>${[["Vorkath", "Vorkath"], ["The Gauntlet", "The Gauntlet"], ["Vardorvis", "DT2 bosses"], ["Theatre of Blood", "Theatre of Blood"]].map(([b, l]) => `<button class="chip" data-g='${esc(JSON.stringify({ type: "boss", name: b }))}'>${esc(l)}</button>`).join("")}</div>
+
+      <div class="seg" id="plMode">${[["fastest", "Fastest"], ["cheapest", "Cheapest"]].map(([k, l]) => `<button data-k="${k}" class="${PL.mode === k ? "on" : ""}">${l}</button>`).join("")}</div>
+      <button class="btn primary" id="plPin" title="Show this goal on the RuneLite side panel's Goal tab">Show in RuneLite</button>
+    </div>
+    <div id="plOut"><div class="muted small">Planning...</div></div>`;
+  const setGoal = (g) => { PL.goal = g; store.set("pl", PL); renderers.planner(host); };
+  $("#plSearch", host).addEventListener("change", (e) => {
+    const v = e.target.value.trim();
+    const boss = PL_CAT.bosses.find((b) => `${b.name} access`.toLowerCase() === v.toLowerCase() || b.name.toLowerCase() === v.toLowerCase());
+    if (boss) return setGoal({ type: "boss", name: boss.name });
+    const q = PL_CAT.quests.find((n) => n.toLowerCase() === v.toLowerCase());
+    if (q) setGoal({ type: "quest", name: q });
+  });
+  $$("[data-g]", host).forEach((b) => (b.onclick = () => setGoal(JSON.parse(b.dataset.g))));
+  $$("#plMode [data-k]", host).forEach((b) => (b.onclick = () => { PL.mode = b.dataset.k; store.set("pl", PL); renderers.planner(host); }));
+  $("#plPin", host).onclick = async () => { await api("/api/planner/goal", { method: "POST", body: PL.goal }); PL_CAT.active = PL.goal; toast("Goal set", `${goalLabel(PL.goal)} now shows on the RuneLite panel's Goal tab.`); };
+  let p;
+  try { p = await api(`/api/planner?${goalQuery(PL.goal)}&mode=${PL.mode}`); } catch (e) { $("#plOut", host).innerHTML = `<div class="notice">${esc(e.message)}</div>`; return; }
+  PL_LAST = p;
+  const out = $("#plOut", host);
+  if (p.done) { out.innerHTML = `<div class="card"><h3 style="margin-top:0">${esc(p.label)}: you're there</h3><p class="muted">Every quest and level it needs is already done.</p></div>`; return; }
+  const unmet = p.requirements.filter((r) => !r.met);
+  out.innerHTML = `
+    ${p.accountKnown ? "" : `<div class="notice soft" style="margin-bottom:8px">Your quests and levels aren't known yet, so this plan assumes nothing is done. Log in with the RuneLite plugin running and it fills in within a minute.</div>`}
+    <div class="tiles">
+      <div class="tile"><div class="k">Time to ${esc(p.label)}</div><div class="v">${hrs(p.hours.total)}</div><div class="s">${p.pace.n >= 2 ? `at your pace (x${p.pace.factor.toFixed(2)})` : "typical pace"}</div></div>
+      <div class="tile"><div class="k">Quests</div><div class="v">${p.counts.quests}</div><div class="s">${hrs(p.hours.quests)}${p.qp.filler.length ? `, ${p.qp.filler.length} for quest points` : ""}</div></div>
+      <div class="tile"><div class="k">Skills to train</div><div class="v">${p.counts.skills}</div><div class="s">${hrs(p.hours.skills)}${p.counts.boosts ? `, ${p.counts.boosts} boosts` : ""}</div></div>
+      <div class="tile"><div class="k">Quest points</div><div class="v">${p.qp.have ?? "-"}${p.qp.need ? ` <span class="muted small">/ ${p.qp.need}</span>` : ""}</div><div class="s">${p.qp.need ? (p.qp.enough ? "enough by then with this plan" : "short, even with this plan") : "no requirement"}</div></div>
+      <div class="tile"><div class="k">To buy</div><div class="v">${short(p.shoppingCost)}</div><div class="s">${p.shopping.filter((s) => s.buy).length} items${p.trainingCost ? `, training about ${short(p.trainingCost)}` : ""}</div></div>
+    </div>
+    <div class="card" style="margin-bottom:8px">${planTimeline(p)}</div>
+    <div class="pl-grid">
+      <div><h3>The plan, in order</h3><div class="pl-tasks">${p.tasks.map((t, i) => taskCard(t, i + 1)).join("")}</div></div>
+      <div>
+        <div class="card"><h3 style="margin-top:0">Requirements</h3>
+          <table class="pl-req">${thead([{ label: "Skill" }, { label: "Need", num: 1 }, { label: "You", num: 1 }, { label: "" }], null)}<tbody>
+          ${p.requirements.map((r) => `<tr class="static"><td>${esc(r.skill)}${r.boostable || r.met ? "" : ` <span class="muted small" title="Can't be boosted for this requirement">no boost</span>`}</td><td class="num">${r.level}</td><td class="num">${r.have ?? "?"}</td><td>${r.met ? `<span class="pos">${arrow(1)}met</span>` : r.have == null ? `<span class="muted">check</span>` : `<span class="neg">${arrow(-1)}${r.level - r.have} short</span>`}</td></tr>`).join("")}</tbody></table>
+          ${p.other.length ? `<h4>Also needed</h4><ul class="pl-other">${p.other.map((o) => `<li>${o.met === true ? `<span class="pos">${arrow(1)}</span> ` : o.met === false ? `<span class="neg">${arrow(-1)}</span> ` : ""}${esc(o.text)} <span class="muted small">(${esc(o.quest || "")})</span></li>`).join("")}</ul>` : ""}
+          ${p.combat.need ? `<p class="small">Combat level ${p.combat.need} needed; you're ${p.combat.have ?? "?"}.</p>` : ""}
+          ${unmet.length ? "" : `<p class="small pos">${arrow(1)}All skill levels met.</p>`}</div>
+        <div class="card" style="margin-top:8px"><div class="section-head"><h3 style="margin:0">Shopping list</h3>${p.shopping.some((s) => s.buy) ? `<button class="btn small" id="plWatch">Watch all</button>` : ""}</div>
+          ${p.shopping.length ? `<table>${thead([{ label: "Item" }, { label: "Need", num: 1 }, { label: "Have", num: 1 }, { label: "Cost", num: 1 }], null)}<tbody>${p.shopping.slice(0, 12).map((s) => `<tr data-id="${s.id}" title="For ${esc(s.for.join(", "))}"><td>${itemCell(s)}</td><td class="num">${gp(s.qty)}</td><td class="num ${s.have >= s.qty ? "pos" : ""}">${gp(s.have)}</td><td class="num">${s.buy ? short(s.cost) : `<span class="muted">have</span>`}</td></tr>`).join("")}</tbody></table>
+            ${p.shopping.length > 12 ? `<details class="small"><summary class="muted">${p.shopping.length - 12} cheaper items, ${short(p.shopping.slice(12).reduce((a, x) => a + (x.cost || 0), 0))} together</summary>${p.shopping.slice(12).map((x) => `${esc(x.name)}${x.qty > 1 ? ` x${gp(x.qty)}` : ""}${x.buy ? "" : " (have)"}`).join(", ")}</details>` : ""}
+            <p class="small muted">Priced at the instant-buy price; a patient offer is cheaper. Quantities add up consumables across quests and count tools once.</p>` : `<p class="muted small">Nothing to buy from the GE.</p>`}
+          ${p.otherItems.length ? `<h4>Not on the GE (or not matched)</h4><p class="small muted">${p.otherItems.map((o) => esc(o.name) + (o.qty > 1 ? ` x${o.qty}` : "")).join(", ")}</p>` : ""}</div>
+      </div>
+    </div>`;
+  bindRowClicks(out);
+  if ($("#plWatch", out)) $("#plWatch", out).onclick = async () => {
+    for (const s of p.shopping.filter((x) => x.buy && !S.watch.has(x.id))) { await api("/api/watchlist", { method: "POST", body: { id: s.id } }); S.watch.add(s.id); }
+    toast("Watching", "Every item on the shopping list is on your watchlist.");
+  };
+};
+
 // Money making: recipes and item sets ---------------------------------------------
 const MM = Object.assign({ patient: true, skill: "all", hideRisky: true, q: "", setDir: "all", rates: {}, smithing: "" }, store.get("mm", {}));
 let MM_DATA = null;
@@ -3930,6 +4037,9 @@ async function loadMarket() {
       const want = new URLSearchParams(location.search).get("layout");
       if (want && layoutById(want)) { if (!OPEN_TABS.includes("L:" + want)) { OPEN_TABS.push("L:" + want); store.set("openTabs", OPEN_TABS); } showTab("L:" + want); }
       else showTab(S.tab in renderers || (isLayoutTab(S.tab) && layoutById(S.tab.slice(2))) ? S.tab : "networth");
+      // Links from the RuneLite side panel: /?tab=planner opens a page, /?item=ID an item in the Terminal.
+      const page = new URLSearchParams(location.search).get("tab");
+      if (page && renderers[page]) { showTab(page); history.replaceState(null, "", location.pathname); }
       // Links from the RuneLite side panel: /?item=ID opens that item in the Terminal.
       const linked = +new URLSearchParams(location.search).get("item");
       if (linked > 0) { openTerminal(linked); history.replaceState(null, "", location.pathname); }

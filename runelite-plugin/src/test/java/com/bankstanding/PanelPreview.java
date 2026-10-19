@@ -210,6 +210,8 @@ public class PanelPreview
 		shot(frame[0], new File(out, "3b-watchlist.png"));
 		SwingUtilities.invokeAndWait(() -> holder[0].ideasCycles());
 		shot(frame[0], new File(out, "3c-cycles.png"));
+		SwingUtilities.invokeAndWait(() -> holder[0].showTab(4));
+		shot(frame[0], new File(out, "7-goal.png"));
 		SwingUtilities.invokeAndWait(() ->
 		{
 			holder[0].update(offline);

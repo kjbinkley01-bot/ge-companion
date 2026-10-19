@@ -141,6 +141,25 @@ def build(app, acct=None, item=None, slot_items=(), since_nid=0, now=None):
         hit = next((c for c in cyc if c["id"] == int(item)), None)
         if hit:
             out["item"]["cycle"] = dict({k: hit.get(k) for k in keep}, wins=hit["test"]["wins"], days=hit["test"]["days"])
+    # The active goal from the Planner, trimmed to what the Goal tab shows.
+    try:
+        from . import planner
+        g = planner.active(D)
+        if g:
+            p = planner.build(D, E, cfg, g, acct=acct, now=now)
+            keep = ("type", "title", "hours", "minutes", "low", "high", "difficulty", "start", "qp", "method", "xp", "xph",
+                    "rateSource", "skill", "from", "target", "boost", "why", "state", "filler")
+            out["goal"] = {
+                "label": p["label"], "hours": p["hours"], "counts": p["counts"], "qp": p["qp"], "done": p["done"],
+                "accountKnown": p["accountKnown"], "pace": p["pace"],
+                "tasks": [dict({k: t.get(k) for k in keep}, items=(t.get("items") or [])[:10],
+                               other=[o["text"] for o in t.get("other") or [] if not o.get("met")][:3]) for t in p["tasks"][:8]],
+                "unmet": [r for r in p["requirements"] if not r["met"]],
+                "shopping": [{"id": x["id"], "name": x["name"], "buy": x["buy"], "cost": x["cost"]} for x in p["shopping"] if x["buy"]][:8],
+                "shoppingCost": p["shoppingCost"],
+            }
+    except Exception as e:  # noqa: BLE001
+        out["goal"] = {"error": str(e)}
     # Account.
     day0 = int(now - 86400)
     flips = [f for f in features.flip_rows(D, E) if not f["open"] and (f.get("sell_ts") or 0) >= day0

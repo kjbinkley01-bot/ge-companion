@@ -59,11 +59,14 @@ A free alternative to GE Tracker premium, built only on public, read-only data.
   `{v, t (ms), type, acct (rsprofile key), name, ...}` with types login, logout, offer (slot,
   state, item, price, total, done, spent: cumulative), container (bank, inventory, equipment,
   looting_bag, seed_vault, rune_pouch, death_storage, ge_collect_0..7; items as [[id, qty]],
-  noted ids canonicalized), loot, xp. JUnit tests: `gradle test` in that folder.
-  Side panel (display only, `BankstandingPanel`, tabs Offers, Item, Ideas, Wealth): the plugin
+  noted ids canonicalized), loot, xp, quests (`states` {name: 0/1/2} from `Quest.values()`, `qp`),
+  levels (`levels` {skill: [real level, xp]}, `combat`); quests and levels are written 8 ticks
+  after login and every 100 ticks, only when changed. JUnit tests: `gradle test` in that folder.
+  Side panel (display only, `BankstandingPanel`, tabs Offers, Item, Ideas, Wealth, Goal): the plugin
   reads GE slots and RuneLite item info on the client thread (`PanelState`), then one GET to
   `/api/plugin/panel` (`geco/panel.py`: header, prices and coach notes for slot items, item
-  detail with 24h spark and its daily cycle, ideas for cash over free slots, `cycles`, watchlist, account, `costs` for the
+  detail with 24h spark and its daily cycle, ideas for cash over free slots, `cycles`, watchlist, account, `goal` (the
+  active planner goal, trimmed), `costs` for the
   bank tooltip, notifications since the last nid). Refreshes every 30 seconds, on offer
   changes, login and the GE item (varp TRADINGPOST_SEARCH, `followGeItem`), debounced; keeps
   the last answer 10 minutes marked stale, else falls back to RuneLite prices. `PanelHost`
@@ -71,6 +74,27 @@ A free alternative to GE Tracker premium, built only on public, read-only data.
   links open `/?item=ID`, which the dashboard opens in the Terminal). `BankCostOverlay` adds
   the bank hover tooltip. RuneScape fonts lack triangles, so `Ui.Triangle` draws them.
   `gradlew previewPanel -Papp=... -Pout=...` renders each tab to PNG from a running app.
+* `geco/quests.py`: quest data from the Wiki (MediaWiki API: Quests and Miniquests category
+  lists, then wikitext and `/Quick guide` pages 50 titles per request, a second apart), parsed
+  from `{{Quest details}}` (SCP skill lines with `{{Boostable|no}}`, the prerequisite tree:
+  only quests directly under "Completion of the following quests" are a quest's own, the
+  Warriors' Guild line is kind `warriors_guild`) and `{{Quest rewards|qp=}}`. Table
+  `quest_data`, refreshed weekly (`quests_enabled`); `geco/quests_snapshot.json` ships a parsed
+  copy for first start and demo mode. `norm()` matches RuneLite and Wiki names.
+* `geco/questtime.py`: quest minutes. Wiki length rating to (typical, low, high) anchors; a ridge
+  regression of log minutes on quick guide counts (steps, teleports, fights, chats, words,
+  items, difficulty), clamped to the rating's range; pace = median of active time (sessions)
+  over estimate for quests the plugin saw start and finish (2+, clipped 0.4 to 2.5).
+* `geco/training.py`: training methods per skill (rough XP/h, cost spec priced live), temporary
+  boosts, measured XP/h from `xp_log`, `plan_skill` (fastest or cheapest).
+* `geco/access.py`: curated boss and raid access (quests, levels, other), linked to the Wiki.
+* `geco/planner.py`: goal planner (quest, grandmasters, boss, skill). Quest closure, highest
+  level per skill, QP filler by minutes per QP among quests already doable, order by
+  prerequisites then same start place then shortest, skill tasks before the first quest that
+  needs them (boost if boostable and covered, else training), shopping list (quantities over
+  one add up, else counted once) at instant-buy minus holdings. Active goal in kv
+  `planner_goal`. Endpoints `/api/planner/catalog`, `/api/planner`, POST `/api/planner/goal`.
+  Quest steps are left to Quest Helper. Display only.
 * `geco/account.py`: ingests plugin files incrementally (byte offsets, whole lines only), keeps
   latest GE offers, reconstructs fills from cumulative offer changes, FIFO matches them into
   automatic flip log rows (`flips.source='auto'`, rebuilt each time; `flip_ignore` opts out).
@@ -199,7 +223,11 @@ images (#CCFF00 lime, #1a1b1e panels, teal header glow).
 v7: Windows background app and icons; RuneLite side panel with Offers, Item, Ideas (flips,
 cycles, watchlist) and Wealth tabs, bank cost tooltip and notifications; Cycles page (daily
 and weekly buy-low sell-high windows, tested on unseen days).
+v8: quest and goal planner (Wiki quest data, guide based time estimates scaled to your pace,
+boss access, skill training and boosts, ordered plan, shopping list), plugin quest and level
+events, panel Goal tab.
 Open questions to verify in game: whether a sell offer's `spent` is before or after tax
-(`account.sell_split` handles both), and how promptly collection box containers update.
+(`account.sell_split` handles both), how promptly collection box containers update, and whether every `Quest` enum name matches
+the Wiki title (`quests.norm` covers "The" and "(quest)").
 Hiscores response format verified against the live endpoint (Sep 2026).
 Next: verify the open questions in game, then consider Plugin Hub submission.

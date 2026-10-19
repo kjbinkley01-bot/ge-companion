@@ -54,11 +54,13 @@ class BankstandingPanel extends PluginPanel
 	private final JPanel item = Ui.stack(6);
 	private final JPanel ideas = Ui.stack(5);
 	private final JPanel account = Ui.stack(5);
+	private final JPanel goal = Ui.stack(5);
 	private final MaterialTabGroup tabs;
 	private final MaterialTab offersTab;
 	private final MaterialTab itemTab;
 	private final MaterialTab ideasTab;
 	private final MaterialTab accountTab;
+	private final MaterialTab goalTab;
 	private final IconTextField search = new IconTextField();
 	private PanelState state = new PanelState();
 	private List<Object[]> results;
@@ -97,14 +99,15 @@ class BankstandingPanel extends PluginPanel
 		JPanel display = new JPanel(new BorderLayout());
 		display.setBackground(Ui.BG);
 		tabs = new MaterialTabGroup(display);
-		tabs.setLayout(new GridLayout(1, 4, 0, 0));
+		tabs.setLayout(new GridLayout(1, 5, 0, 0));
 		tabs.setBackground(Ui.BG);
 		tabs.setBorder(BorderFactory.createEmptyBorder(0, 4, 0, 4));
-		offersTab = new MaterialTab("Offers", tabs, scroll(offers));
-		itemTab = new MaterialTab("Item", tabs, itemPage);
-		ideasTab = new MaterialTab("Ideas", tabs, scroll(ideas));
-		accountTab = new MaterialTab("Wealth", tabs, scroll(account));
-		for (MaterialTab t : new MaterialTab[]{offersTab, itemTab, ideasTab, accountTab})
+		offersTab = new Tab("Offers", tabs, scroll(offers));
+		itemTab = new Tab("Item", tabs, itemPage);
+		ideasTab = new Tab("Ideas", tabs, scroll(ideas));
+		accountTab = new Tab("Wealth", tabs, scroll(account));
+		goalTab = new Tab("Goal", tabs, scroll(goal));
+		for (MaterialTab t : new MaterialTab[]{offersTab, itemTab, ideasTab, accountTab, goalTab})
 		{
 			t.setHorizontalAlignment(SwingConstants.CENTER);
 			t.setFont(FontManager.getRunescapeSmallFont());
@@ -136,7 +139,7 @@ class BankstandingPanel extends PluginPanel
 
 	void showTab(int i)
 	{
-		tabs.select(new MaterialTab[]{offersTab, itemTab, ideasTab, accountTab}[i]);
+		tabs.select(new MaterialTab[]{offersTab, itemTab, ideasTab, accountTab, goalTab}[i]);
 	}
 
 	private void render()
@@ -146,6 +149,7 @@ class BankstandingPanel extends PluginPanel
 		renderItem();
 		renderIdeas();
 		renderAccount();
+		renderGoal();
 	}
 
 	private JsonObject app()
@@ -980,6 +984,174 @@ class BankstandingPanel extends PluginPanel
 		done(account);
 	}
 
+	// Goal -------------------------------------------------------------------------------------
+
+	private static String hours(Double h)
+	{
+		if (h == null)
+		{
+			return "-";
+		}
+		return h < 1 ? Math.max(1, Math.round(h * 60)) + " min" : String.format(Locale.US, h < 10 ? "%.1f h" : "%.0f h", h);
+	}
+
+	private void renderGoal()
+	{
+		goal.removeAll();
+		JsonObject g = Fmt.obj(app(), "goal");
+		if (g == null || Fmt.str(g, "label") == null)
+		{
+			goal.add(note(app() == null ? "Goals need the Bankstanding app running on this PC."
+				: "No goal yet. On the dashboard's Planner page, pick a quest, boss or level and press Show in RuneLite."));
+			JButton open = smallButton("Open the planner", "Open the Planner page in your browser");
+			open.addActionListener(e -> host.openDashboard("/?tab=planner"));
+			goal.add(open);
+			done(goal);
+			return;
+		}
+		JsonObject hrs = Fmt.obj(g, "hours");
+		JsonObject counts = Fmt.obj(g, "counts");
+		JPanel head = Ui.card(null);
+		JPanel hs = Ui.stack(2);
+		hs.add(Ui.bold(Fmt.str(g, "label")));
+		if (Fmt.bool(g, "done"))
+		{
+			hs.add(Ui.label("Everything it needs is done.", FontManager.getRunescapeSmallFont(), Ui.UP));
+		}
+		else
+		{
+			hs.add(Ui.label(hours(Fmt.num(hrs, "total")) + " to go", FontManager.getRunescapeBoldFont().deriveFont(16f), Ui.TEXT));
+			hs.add(Ui.small(Fmt.num(counts, "quests").intValue() + " quests (" + hours(Fmt.num(hrs, "quests")) + "), "
+				+ Fmt.num(counts, "skills").intValue() + " skills (" + hours(Fmt.num(hrs, "skills")) + ")"));
+			JsonObject qp = Fmt.obj(g, "qp");
+			Double need = Fmt.num(qp, "need");
+			if (need != null && need > 0)
+			{
+					hs.add(Ui.small(Fmt.gp(Fmt.num(qp, "have")) + " of " + Fmt.gp(need) + " quest points"
+					+ (Fmt.bool(qp, "enough") ? ", enough" : ", short")));
+			}
+			JsonObject pace = Fmt.obj(g, "pace");
+			Double n = Fmt.num(pace, "n");
+			if (n != null && n >= 2)
+			{
+				hs.add(Ui.small(String.format(Locale.US, "At your pace (x%.2f from %d quests)", Fmt.num(pace, "factor"), n.intValue())));
+			}
+		}
+		head.add(hs);
+		goal.add(head);
+		JsonArray tasks = Fmt.arr(g, "tasks");
+		if (tasks.size() > 0)
+		{
+			goal.add(Ui.heading("Next up"));
+			goal.add(taskCard(tasks.get(0).getAsJsonObject(), true));
+		}
+		if (tasks.size() > 1)
+		{
+			goal.add(Ui.heading("Then"));
+			JPanel list = Ui.card(null);
+			JPanel ls = Ui.stack(3);
+			for (int i = 1; i < tasks.size(); i++)
+			{
+				JsonObject t = tasks.get(i).getAsJsonObject();
+				ls.add(Ui.kv((i + 1) + ". " + Fmt.str(t, "title"), hours(Fmt.num(t, "hours"))));
+			}
+			list.add(ls);
+			goal.add(list);
+		}
+		JsonArray unmet = Fmt.arr(g, "unmet");
+		if (unmet.size() > 0)
+		{
+			goal.add(Ui.heading("Levels still short"));
+			JPanel c = Ui.card(null);
+			JPanel cs = Ui.stack(3);
+			for (JsonElement e : unmet)
+			{
+				JsonObject r = e.getAsJsonObject();
+				Double have = Fmt.num(r, "have");
+				cs.add(Ui.kv(Fmt.str(r, "skill") + (Fmt.bool(r, "boostable") ? "" : " (no boost)"),
+					Ui.label((have == null ? "?" : Integer.toString(have.intValue())) + " of " + Fmt.num(r, "level").intValue(),
+						FontManager.getRunescapeSmallFont(), Ui.DOWN)));
+			}
+			c.add(cs);
+			goal.add(c);
+		}
+		JsonArray shop = Fmt.arr(g, "shopping");
+		if (shop.size() > 0)
+		{
+			goal.add(Ui.heading("To buy, " + Fmt.shortGp(Fmt.num(g, "shoppingCost"))));
+			JPanel c = Ui.card(null);
+			JPanel cs = Ui.stack(3);
+			for (JsonElement e : shop)
+			{
+				JsonObject x = e.getAsJsonObject();
+				Double buy = Fmt.num(x, "buy");
+				cs.add(Ui.kv((buy != null && buy > 1 ? Fmt.gp(buy) + " x " : "") + Fmt.str(x, "name"), Fmt.shortGp(Fmt.num(x, "cost"))));
+			}
+			c.add(cs);
+			goal.add(c);
+		}
+		JButton open = smallButton("Open the full plan", "Open the Planner page in your browser");
+		open.addActionListener(e -> host.openDashboard("/?tab=planner"));
+		goal.add(open);
+		done(goal);
+	}
+
+	private JPanel taskCard(JsonObject t, boolean big)
+	{
+		JPanel card = Ui.card(BorderFactory.createEmptyBorder(7, 8, 7, 8));
+		JPanel s = Ui.stack(2);
+		String type = Fmt.str(t, "type");
+		JPanel top = new JPanel(new BorderLayout(4, 0));
+		top.setOpaque(false);
+		top.add(Ui.label(Fmt.str(t, "title"), FontManager.getRunescapeBoldFont(), Ui.TEXT), BorderLayout.CENTER);
+		top.add(Ui.label(hours(Fmt.num(t, "hours")), FontManager.getRunescapeSmallFont(), Ui.UP), BorderLayout.EAST);
+		s.add(top);
+		if ("quest".equals(type))
+		{
+			Double lo = Fmt.num(t, "low"), hi = Fmt.num(t, "high");
+			s.add(Ui.small(Fmt.str(t, "difficulty") + (lo != null && hi != null ? ", " + hours(lo / 60) + " to " + hours(hi / 60) : "")
+				+ (Fmt.num(t, "state") != null && Fmt.num(t, "state") == 1 ? ", started" : "")));
+			if (Fmt.str(t, "start") != null)
+			{
+				s.add(Ui.wrap("Start: " + Fmt.str(t, "start"), Ui.TEXT, 190));
+			}
+			StringBuilder items = new StringBuilder();
+			for (JsonElement e : Fmt.arr(t, "items"))
+			{
+				items.append(items.length() > 0 ? ", " : "").append(e.getAsString());
+			}
+			if (items.length() > 0)
+			{
+				s.add(Ui.wrap("Bring: " + items, Ui.MUTED, 190));
+			}
+			for (JsonElement e : Fmt.arr(t, "other"))
+			{
+				s.add(Ui.wrap(e.getAsString(), Ui.WARN, 190));
+			}
+			s.add(Ui.wrap("For each step, open Quest Helper and pick \"" + Fmt.str(t, "title") + "\".", Ui.MUTED, 190));
+		}
+		else if ("boost".equals(type))
+		{
+			s.add(Ui.wrap("This requirement can be boosted, so no training needed.", Ui.MUTED, 190));
+		}
+		else
+		{
+			s.add(Ui.wrap(Fmt.str(t, "method") == null ? "No method in the table for this level yet" : Fmt.str(t, "method"), Ui.TEXT, 190));
+			Double xph = Fmt.num(t, "xph");
+			if (xph != null)
+			{
+				s.add(Ui.small(Fmt.gp(Fmt.num(t, "xp")) + " XP at about " + Fmt.shortGp(xph) + "/h"
+					+ ("yours".equals(Fmt.str(t, "rateSource")) ? " (your rate)" : "")));
+			}
+			if (Fmt.str(t, "why") != null)
+			{
+				s.add(Ui.small("Needed for " + Fmt.str(t, "why")));
+			}
+		}
+		card.add(s);
+		return card;
+	}
+
 	// Plumbing -------------------------------------------------------------------------------
 
 	private static JPanel note(String text)
@@ -993,6 +1165,30 @@ class BankstandingPanel extends PluginPanel
 	{
 		p.revalidate();
 		p.repaint();
+	}
+
+	/** A RuneLite tab with less side padding, so five fit across the side bar. */
+	private static class Tab extends MaterialTab
+	{
+		Tab(String text, MaterialTabGroup group, JComponent content)
+		{
+			super(text, group, content);
+		}
+
+		@Override
+		public void setBorder(javax.swing.border.Border b)
+		{
+			// Keep RuneLite's selected underline, swap its wide padding for a narrow one.
+			if (b instanceof javax.swing.border.CompoundBorder)
+			{
+				super.setBorder(BorderFactory.createCompoundBorder(((javax.swing.border.CompoundBorder) b).getOutsideBorder(),
+					BorderFactory.createEmptyBorder(5, 1, 4, 1)));
+			}
+			else
+			{
+				super.setBorder(BorderFactory.createEmptyBorder(5, 1, 5, 1));
+			}
+		}
 	}
 
 	/** A scroll area whose content always fits the side bar's width. */

@@ -26,6 +26,8 @@ import net.runelite.api.GrandExchangeOffer;
 import net.runelite.api.Item;
 import net.runelite.api.ItemContainer;
 import net.runelite.api.Player;
+import net.runelite.api.Quest;
+import net.runelite.api.QuestState;
 import net.runelite.api.Skill;
 import net.runelite.api.events.GameStateChanged;
 import net.runelite.api.events.GameTick;
@@ -157,6 +159,7 @@ public class BankstandingPlugin extends Plugin
 	private String account;
 	private String name;
 	private boolean runePouchDirty;
+	private int ticksSinceLogin;
 	private volatile int selectedItem = -1;
 	private volatile long lastNid;
 	private volatile JsonObject lastApp;
@@ -510,6 +513,7 @@ public class BankstandingPlugin extends Plugin
 			}
 			if (state == GameState.LOGIN_SCREEN)
 			{
+				ticksSinceLogin = 0;
 				account = null;
 				name = null;
 				filter.clear();
@@ -550,6 +554,15 @@ public class BankstandingPlugin extends Plugin
 			writeRunePouch();
 		}
 		flushXp(false);
+		// Quest progress, levels and quest points: shortly after login, then once a minute.
+		if (account != null)
+		{
+			ticksSinceLogin++;
+			if (ticksSinceLogin == 8 || ticksSinceLogin % 100 == 0)
+			{
+				writeProgress();
+			}
+		}
 		// The item picked on the GE offer screen: refresh the panel as soon as it changes.
 		int item = client.getVarpValue(VarPlayerID.TRADINGPOST_SEARCH);
 		if (item != geItem)
@@ -691,6 +704,49 @@ public class BankstandingPlugin extends Plugin
 			out.add(new int[]{flat[i], flat[i + 1]});
 		}
 		return out;
+	}
+
+	// Quests and levels (read only) ---------------------------------------------------------
+
+	/** Records every quest's state, quest points, real levels and XP when any of them changed. */
+	private void writeProgress()
+	{
+		Map<String, Integer> states = new java.util.TreeMap<>();
+		for (Quest q : Quest.values())
+		{
+			QuestState st = q.getState(client);
+			states.put(q.getName(), st == QuestState.FINISHED ? 2 : st == QuestState.IN_PROGRESS ? 1 : 0);
+		}
+		int qp = client.getVarpValue(VarPlayerID.QP);
+		if (filter.changed(account + "quests", states.hashCode() * 31 + qp))
+		{
+			Map<String, Object> e = EventWriter.event("quests", account, name, System.currentTimeMillis());
+			e.put("states", states);
+			e.put("qp", qp);
+			emit(e);
+		}
+		Map<String, int[]> levels = new java.util.TreeMap<>();
+		for (Skill sk : Skill.values())
+		{
+			if (sk != Skill.OVERALL)
+			{
+				levels.put(sk.getName(), new int[]{client.getRealSkillLevel(sk), client.getSkillExperience(sk)});
+			}
+		}
+		Player me = client.getLocalPlayer();
+		int combat = me == null ? 0 : me.getCombatLevel();
+		int hash = combat;
+		for (Map.Entry<String, int[]> x : levels.entrySet())
+		{
+			hash = hash * 31 + x.getValue()[0];
+		}
+		if (filter.changed(account + "levels", hash))
+		{
+			Map<String, Object> e = EventWriter.event("levels", account, name, System.currentTimeMillis());
+			e.put("levels", levels);
+			e.put("combat", combat);
+			emit(e);
+		}
 	}
 
 	// Loot and XP ------------------------------------------------------------------------

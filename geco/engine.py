@@ -7,7 +7,7 @@ import time
 
 from . import (
     account, analytics, brief, coach, edge, extras, features, fills, forecast, forecast_eval, hold,
-    market, networth, news, push, recipes, targets, wealth,
+    market, networth, news, quests, push, recipes, targets, wealth,
 )
 from .config import DATA_DIR
 
@@ -42,6 +42,7 @@ class Engine:
         account.init(db)
         networth.init(db)
         news.init(db)
+        quests.init(db)
         for mod in (wealth, edge, targets, extras):
             mod.init(db)
         self.demo_feed = None
@@ -451,6 +452,7 @@ class Engine:
         self.refresh_fill_rates()
         self.rebuild()
         threading.Thread(target=self.refresh_news, kwargs={"full": True}, daemon=True, name="news").start()
+        threading.Thread(target=self.refresh_quests, daemon=True, name="quests").start()
         threading.Thread(target=self._loop, daemon=True, name="poller").start()
         threading.Thread(target=self.backfill, daemon=True, name="backfill").start()
 
@@ -510,6 +512,15 @@ class Engine:
             analytics.clear_cache()
         except Exception as e:
             self._err("news", e)
+
+    def refresh_quests(self):
+        """Quest data from the Wiki, at most weekly (about 12 bulk requests). Demo uses the snapshot."""
+        if getattr(self.client, "is_demo", False) or self.cfg.get("quests_enabled", True) is False:
+            return
+        try:
+            quests.refresh(self.db, self.client)
+        except Exception as e:
+            self._err("quests", e)
 
     def stop(self):
         self._stop.set()
@@ -577,3 +588,4 @@ class Engine:
                     self.load_mapping(force=True)
                 except Exception as e:
                     self._err("mapping", e)
+                threading.Thread(target=self.refresh_quests, daemon=True, name="quests").start()

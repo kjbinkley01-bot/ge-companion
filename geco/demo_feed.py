@@ -32,6 +32,9 @@ class DemoFeed:
         fresh = not any(f.endswith(".jsonl") for f in os.listdir(folder))
         if fresh:
             self._history(latest)
+        if not os.path.exists(os.path.join(folder, "progress.done")):
+            self._progress()
+            open(os.path.join(folder, "progress.done"), "w").close()
 
     # Writing --------------------------------------------------------------------------
     def _write(self, t, etype, **fields):
@@ -129,6 +132,47 @@ class DemoFeed:
         for slot in (0, 1, 2):  # the plugin also reports each slot's collection box
             self._write(now - 590, "container", container=f"ge_collect_{slot}", items=[])
         self.last_tick = now
+
+    # Quests and levels ----------------------------------------------------------------------
+    # A mid to late game main working toward the grandmaster quests: most quests done, a few
+    # of While Guthix Sleeps' prerequisites left, and some skills short of its levels.
+    TODO = {"While Guthix Sleeps", "Dream Mentor", "Tears of Guthix", "Temple of the Eye", "The Path of Glouphrie",
+            "Dragon Slayer II", "Song of the Elves", "Monkey Madness II", "Desert Treasure II - The Fallen Empire",
+            "Sins of the Father", "Mourning's End Part II", "Lunar Diplomacy", "A Night at the Theatre",
+            "Secrets of the North", "The Garden of Death", "Defender of Varrock", "Making Friends with My Arm",
+            "Beneath Cursed Sands", "Kingdom Divided", "A Kingdom Divided", "Children of the Sun",
+            "Twilight's Promise", "At First Light", "Perilous Moons", "The Ribbiting Tale of a Lily Pad Labour Dispute",
+            "Meat and Greet", "The Heart of Darkness", "Death on the Isle", "Ethically Acquired Antiquities",
+            "The Curse of Arrav", "The Final Dawn", "Shadows of Custodia", "Scrambled!", "Pandemonium",
+            "Troubled Tortugans", "Prying Times", "Current Affairs", "The Red Reef", "Ruins of Unkah",
+            "Recipe for Disaster", "Legends' Quest", "Underground Pass", "Regicide", "Roving Elves",
+            "Mourning's End Part I", "Making History", "The Eyes of Glouphrie", "Swan Song", "Grim Tales",
+            "Desert Treasure I", "Enakhra's Lament", "Contact!", "The Fremennik Exiles", "Royal Trouble",
+            "Throne of Miscellania", "Bone Voyage", "Client of Kourend", "Ghosts Ahoy", "Animal Magnetism"}
+    TIMED = [("The Hand in the Sand", 5.5, 52), ("Fight Arena", 9.2, 24), ("Nature Spirit", 12.1, 31),
+             ("A Tail of Two Cats", 8.0, 38), ("Wanted!", 6.3, 47)]
+    LEVELS = {"Attack": 78, "Strength": 80, "Defence": 75, "Ranged": 82, "Prayer": 70, "Magic": 80,
+              "Runecraft": 58, "Construction": 68, "Hitpoints": 82, "Agility": 63, "Herblore": 66,
+              "Thieving": 68, "Crafting": 71, "Fletching": 75, "Slayer": 72, "Hunter": 58, "Mining": 70,
+              "Smithing": 66, "Fishing": 76, "Cooking": 80, "Firemaking": 75, "Woodcutting": 74,
+              "Farming": 67, "Sailing": 1}
+
+    def _progress(self):
+        from . import quests as qmod
+        names = list(qmod.load_snapshot().keys())
+        now = time.time()
+        timed = {n: (now - d * 86400, mins) for n, d, mins in self.TIMED}
+        start = {n: (0 if n in self.TODO else 1 if n in timed else 2) for n in names}
+        self._write(now - 13 * 86400, "quests", states=start, qp=172)
+        st = dict(start)
+        for n, (when, mins) in sorted(timed.items(), key=lambda kv: kv[1][0]):
+            st[n] = 1
+            self._write(when, "quests", states=dict(st), qp=172)
+            st[n] = 2
+            self._write(when + mins * 60, "quests", states=dict(st), qp=172)
+        from .skills import xp_for_level
+        lv = {k: [v, xp_for_level(v) + 1000] for k, v in self.LEVELS.items()}
+        self._write(now - 2 * 3600, "levels", levels=lv, combat=104)
 
     # Live changes ---------------------------------------------------------------------------
     def tick(self, latest):
