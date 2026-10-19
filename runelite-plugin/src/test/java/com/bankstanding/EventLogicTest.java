@@ -22,6 +22,19 @@ public class EventLogicTest
 	public TemporaryFolder tmp = new TemporaryFolder();
 
 	@Test
+	public void farmingWaitsForTheRegionToSettle()
+	{
+		AccountReader.RegionClock clock = new AccountReader.RegionClock();
+		assertFalse(clock.settled(11062)); // just arrived: the old region's values may linger
+		assertFalse(clock.settled(11062));
+		assertTrue(clock.settled(11062));
+		assertFalse(clock.settled(10548));
+		assertTrue(AccountReader.FARM_REGIONS.contains(11062));
+		assertFalse(AccountReader.FARM_REGIONS.contains(12342)); // Edgeville
+		assertEquals(14, AccountReader.FARM_VARBITS.length);
+	}
+
+	@Test
 	public void flattenMergesStacksAndDropsEmptySlots()
 	{
 		Item[] items = {new Item(995, 1000), new Item(-1, 0), new Item(561, 5), new Item(995, 500), null,

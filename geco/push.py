@@ -17,13 +17,14 @@ import urllib.request
 
 log = logging.getLogger("bankstanding.push")
 EVENTS = {"fills": "GE offers filling", "alerts": "Price alerts", "coach": "Offer coach warnings",
-          "limits": "Buy limit resets", "statement": "Daily bank statement"}
+          "limits": "Buy limit resets", "statement": "Daily bank statement",
+          "farming": "Farming patches and bird houses ready", "dailies": "Daily and weekly tasks reset"}
 
 
 def enabled(cfg, event):
     if not (cfg.get("push_discord_webhook") or cfg.get("push_ntfy_topic")):
         return False
-    return bool((cfg.get("push_events") or {}).get(event, event in ("alerts", "coach", "statement")))
+    return bool((cfg.get("push_events") or {}).get(event, event in ("alerts", "coach", "statement", "farming")))
 
 
 def _post(url, data, headers, user_agent):

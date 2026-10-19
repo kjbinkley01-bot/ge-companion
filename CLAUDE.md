@@ -61,7 +61,12 @@ A free alternative to GE Tracker premium, built only on public, read-only data.
   looting_bag, seed_vault, rune_pouch, death_storage, ge_collect_0..7; items as [[id, qty]],
   noted ids canonicalized), loot, xp, quests (`states` {name: 0/1/2} from `Quest.values()`, `qp`),
   levels (`levels` {skill: [real level, xp]}, `combat`); quests and levels are written 8 ticks
-  after login and every 100 ticks, only when changed. JUnit tests: `gradle test` in that folder.
+  after login and every 100 ticks, only when changed.
+  `AccountReader` adds farm (the 14 farming transmit varbits of the settled region you stand in,
+  only farming regions, never with a modal open, plus the 4 bird house varps on Fossil Island and
+  Time Tracking's learned tick offset), diaries ({region: [easy, medium, hard, elite]}, with
+  quests) and slayer (count, task and area names from the game's Slayer DB tables, points,
+  streak, blocked tasks), each only when changed. JUnit tests: `gradle test` in that folder.
   Side panel (display only, `BankstandingPanel`, tabs Offers, Item, Ideas, Wealth, Goal): the plugin
   reads GE slots and RuneLite item info on the client thread (`PanelState`), then one GET to
   `/api/plugin/panel` (`geco/panel.py`: header, prices and coach notes for slot items, item
@@ -152,6 +157,13 @@ A free alternative to GE Tracker premium, built only on public, read-only data.
   trees) live in kv `farming_unlocks`. `run_setup` builds the Inventory Setups setup (setup keys
   `run|<key>[|value]`, also `birdhouse`, `supercompost`, `willow`); `training_methods` feeds the
   planner a "Farming runs" method. Endpoints `/api/runs?mode=`, POST `/api/runs/unlocks`.
+* `geco/patches.py`: decodes farm events with `geco/farming_patches.json` (RuneLite Time Tracking's
+  PatchImplementation, Produce and FarmingWorld ported by a converter, BSD notice kept; grapes and
+  big compost left out; region bounds in `BOUNDS`), grows them forward on farming ticks
+  (`tick_time`, offset when Time Tracking learned it), groups readiness by kind and alerts once
+  per set (`due_notices`, push event `farming`). `pace` = median minutes between plantings in
+  different places (5+), used by `farming.plan_run` instead of `STOP_MINUTES`. Diaries the plugin
+  reports (kv `diaries:<acct>`) and a grown spirit tree set farming unlocks (`derived_unlocks`).
 * Data versions: `quests.VERSION`, `skillguides.VERSION`, `setups.VERSION` and `farming.VERSION` are stored with the
   data; a stored copy from another version is ignored (snapshot used) and fetched again at once.
 * `geco/account.py`: ingests plugin files incrementally (byte offsets, whole lines only), keeps

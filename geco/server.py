@@ -437,6 +437,10 @@ def make_handler(app):
                 from . import farming
                 mode = "value" if q.get("mode") == "value" else "xp"
                 return self._send(200, farming.plan_all(D, E, mode, acct=q.get("acct") or None))
+            if path == "/api/patches":
+                from . import patches, planner
+                acct = q.get("acct") or planner.main_account(D)
+                return self._send(200, patches.status(D, acct) if acct else {"patches": [], "groups": [], "birdhouses": []})
             if path == "/api/setups/items":
                 from . import setups
                 return self._send(200, setups.search_items(E, setups.load(D).get("items"), q.get("q")))

@@ -3063,7 +3063,7 @@ function rnCard(r, mode, best) {
   const open = RN.open[r.key] ?? best;
   const kinds = r.kinds.filter((k) => r.crops[k]);
   const head = `<div class="rn-sum"><div><h3>${esc(r.title)}${best ? ` <span class="rn-best">Best use of your time</span>` : ""}</h3>
-      <div class="muted small">${r.patches} patches at ${r.places} places · ${r.minutes} min · ready every ${rnEvery(r.growth)}${r.locked.length ? ` · ${r.locked.length} locked` : ""}</div></div>
+      <div class="muted small">${r.patches} patches at ${r.places} places · ${r.minutes} min${r.measured ? " (your pace)" : ""} · ready every ${rnEvery(r.growth)}${r.locked.length ? ` · ${r.locked.length} locked` : ""}</div></div>
     <div class="rn-nums"><div><span class="k">XP a run</span><b>${gp(Math.round(r.xp))}</b></div><div><span class="k">Profit</span><b class="${r.profit >= 0 ? "pos" : "neg"}">${signed(Math.round(r.profit), short)}</b></div><div><span class="k">${mode === "xp" ? "XP an hour" : "gp an hour"}</span><b>${short(mode === "xp" ? r.xpPerHour : r.profitPerHour)}</b></div></div></div>`;
   const usable = r.stops.filter((s) => s.usable);
   return `<details class="card rn-card" data-k="${esc(r.key)}" ${open ? "open" : ""}><summary>${head}</summary>
@@ -3075,6 +3075,21 @@ function rnCard(r, mode, best) {
       <span class="muted small">Per day, doing it each time it's ready (up to ${Math.round(r.perDay.runs * 10) / 10} a day): ${gp(Math.round(r.perDay.xp))} XP, ${signed(Math.round(r.perDay.profit), short)}. <a href="${esc(r.url)}" target="_blank" rel="noopener">Wiki route</a></span></div>
   </details>`;
 }
+function rnWhen(t, now) {
+  const m = Math.max(0, Math.round((t - now) / 60));
+  return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} min`;
+}
+function rnTracked(tr) {
+  if (!tr || !tr.groups.some((g) => g.planted)) return `<div class="card rn-tracked"><h3 style="margin-top:0">Your patches</h3><p class="small muted" style="margin:0">Nothing seen yet. Walk past your patches with the RuneLite plugin running and they show here, with an alert when a whole set is ready (Settings, Phone notifications, "Farming patches and bird houses ready").</p></div>`;
+  const now = tr.now;
+  const pace = Object.entries(tr.pace || {}).map(([g, v]) => `${v.minutes.toFixed(1)} min a stop for ${g === "trees" ? "trees" : "herbs and other patches"} (${v.n} stops)`).join(", ");
+  const state = (p) => p.state === "ready" ? `<span class="pos">${arrow(1)}ready</span>` : p.state === "growing" ? `ready in ${rnWhen(p.doneAt, now)}` : p.state === "diseased" ? `<span class="neg">${arrow(-1)}diseased</span>` : p.state === "dead" ? `<span class="neg">${arrow(-1)}dead</span>` : p.state === "built" ? `<span class="muted">built, needs seeds</span>` : `<span class="muted">empty</span>`;
+  const items = tr.patches.concat(tr.birdhouses).filter((p) => p.state !== "empty");
+  return `<div class="card rn-tracked"><div class="section-head" style="margin-top:0"><h3 style="margin:0">Your patches</h3><span class="muted small">as last seen by the plugin${tr.tickOffsetKnown ? ", timed with your account's farming tick" : ""}</span></div>
+    <div class="rn-groups">${tr.groups.filter((g) => g.planted).map((g) => `<div class="rn-group ${g.allReady ? "on" : ""}"><span class="k">${esc(g.label)}</span><b>${g.allReady ? `${arrow(1)}ready` : g.planted ? (g.readyAt ? rnWhen(g.readyAt, now) : "growing") : "empty"}</b><span class="muted small">${g.planted ? `${g.ready} of ${g.planted} ready` : `${g.patches} seen`}${g.sick ? `, <span class="neg">${g.sick} diseased or dead</span>` : ""}</span></div>`).join("")}</div>
+    <details class="small"><summary class="muted">Every planted patch (${items.length})</summary><table class="rn-patches"><tbody>${items.map((p) => `<tr class="static"><td>${esc(p.place)}</td><td class="muted">${esc(RN_KIND[p.kind] || (p.kind === "birdhouse" ? "Bird house" : p.kind))}</td><td>${p.crop ? esc(p.crop) : ""}</td><td class="num">${state(p)}</td><td class="num muted">seen ${fmtTime(p.seen)}</td></tr>`).join("")}</tbody></table></details>
+    ${pace ? `<p class="small muted" style="margin-bottom:0">Your pace, from when you planted: ${esc(pace)}. Run times below use it.</p>` : ""}</div>`;
+}
 renderers.runs = async function (host) {
   host.innerHTML = `<h2>Farming runs</h2>
     <p class="lede">Every run from the Wiki's Farming runs guide, planned for your account: the best crop for each patch at your level, compost or a paid gardener (whichever is worth it), the flower that guards your allotments, the quickest teleport you can use with what's in your bank, and which patches your quests and diaries unlock. Each run exports as an Inventory Setups setup.</p>
@@ -3084,9 +3099,10 @@ renderers.runs = async function (host) {
   $$("#rnMode [data-k]", host).forEach((b) => (b.onclick = () => { RN.mode = b.dataset.k; store.set("rn", RN); renderers.runs(host); }));
   let p;
   try { p = await api("/api/runs?mode=" + RN.mode); } catch (e) { $("#rnOut", host).innerHTML = `<div class="notice">${esc(e.message)}</div>`; return; }
-  $("#rnUnlockBox", host).innerHTML = `<p class="small muted" style="margin-top:0">The plugin can't see achievement diaries, so tick what you have.</p>${Object.entries(p.unlockLabels).map(([k, l]) => `<label class="rn-check"><input type="checkbox" data-u="${k}" ${p.unlocks.includes(k) ? "checked" : ""}> ${esc(l)}</label>`).join("")}`;
+  const auto = p.autoUnlocks || {};
+  $("#rnUnlockBox", host).innerHTML = `<p class="small muted" style="margin-top:0">${Object.keys(auto).length ? "Diaries the plugin has seen are ticked for you. " : "The plugin reports your diaries once you log in with it; until then, tick what you have. "}Planted spirit trees and Fortis Champion rank can't be read, so tick those.</p>${Object.entries(p.unlockLabels).map(([k, l]) => `<label class="rn-check"><input type="checkbox" data-u="${k}" ${p.unlocks.includes(k) ? "checked" : ""} ${auto[k] ? "disabled" : ""}> ${esc(l)}${auto[k] ? ` <span class="muted small">(${auto[k] === "diary" ? "from your diaries" : "seen on your patch"})</span>` : ""}</label>`).join("")}`;
   $$("[data-u]", host).forEach((c) => (c.onchange = async () => {
-    await api("/api/runs/unlocks", { method: "POST", body: { unlocks: $$("[data-u]", host).filter((x) => x.checked).map((x) => x.dataset.u) } });
+    await api("/api/runs/unlocks", { method: "POST", body: { unlocks: $$("[data-u]", host).filter((x) => x.checked && !x.disabled).map((x) => x.dataset.u) } });
     const keep = $("#rnUnlocks", host).open; await renderers.runs(host); if (keep) $("#rnUnlocks", host).open = true;
   }));
   const byKey = Object.fromEntries(p.runs.map((r) => [r.key, r]));
@@ -3105,6 +3121,7 @@ renderers.runs = async function (host) {
       <div class="tile"><div class="k">Routine profit a day</div><div class="v ${rt.perDay.profit >= 0 ? "pos" : "neg"}">${signed(Math.round(rt.perDay.profit), short)}</div><div class="s">${mode === "xp" ? "while going for XP" : "best value crops"}</div></div>
       <div class="tile"><div class="k">Best run now</div><div class="v rn-v">${esc(title(p.ranked[0] || ""))}</div><div class="s">${p.ranked[0] ? `${short((byKey[p.ranked[0]] || bh)[mode === "xp" ? "xpPerHour" : "profitPerHour"])} ${mode === "xp" ? "XP" : "gp"} an hour of play` : ""}</div></div>
     </div>
+    ${rnTracked(p.tracked)}
     <div class="card rn-routine"><h3 style="margin-top:0">Your routine</h3>
       <p class="small muted" style="margin-top:0">One choice from each group of runs that share patches, ${mode === "xp" ? "for the most XP a day" : "for the most profit a day (trees by the least gp per XP, since they cost money)"}, doing each run when it's ready.</p>
       <table>${thead([{ label: "Group" }, { label: "Do" }, { label: "Each run", num: 1 }, { label: "Ready every", num: 1 }, { label: "XP a day", num: 1 }, { label: "Profit a day", num: 1 }], null)}<tbody>

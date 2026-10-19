@@ -459,7 +459,11 @@ class Context:
         self.quest_names = {norm(k): k for k in quests.load(db)}
         self.own = setups.owned(db, self.acct)
         self.items = setups.Items(engine, setups.load(db).get("items"))
-        self.unlocks = set(unlocks if unlocks is not None else (db.kv_get("farming_unlocks") or []))
+        self.ticked = set(unlocks if unlocks is not None else (db.kv_get("farming_unlocks") or []))
+        self.auto = derived_unlocks(db, self.acct)
+        self.unlocks = self.ticked | set(self.auto)
+        from . import patches
+        self.pace = patches.pace(db, self.acct) if self.acct else {}
         self.data = load(db)
         self.disease = self.data.get("disease") or {}
         self._find = {}
@@ -497,6 +501,27 @@ class Context:
         if p and side == "sell":
             p -= self.engine.tax(p, info["id"])
         return p
+
+
+# Diary tiers that set the unlocks above: (region as the plugin names it, tier 0 to 3).
+DIARY_UNLOCKS = {"kandarin_medium": ("Kandarin", 1), "kandarin_hard": ("Kandarin", 2), "kandarin_elite": ("Kandarin", 3),
+                 "kourend_easy": ("Kourend & Kebos", 0), "kourend_hard": ("Kourend & Kebos", 2),
+                 "falador_medium": ("Falador", 1), "falador_elite": ("Falador", 3),
+                 "morytania_elite": ("Morytania", 3), "fairy_staffless": ("Lumbridge & Draynor", 3)}
+
+
+def derived_unlocks(db, acct):
+    """{unlock: why} the plugin has seen: diary tiers, and a grown spirit tree of yours."""
+    from . import account, patches
+    out = {}
+    d = account.diaries(db, acct) if acct else {}
+    for key, (region, tier) in DIARY_UNLOCKS.items():
+        tiers = d.get(region) or []
+        if len(tiers) > tier and tiers[tier]:
+            out[key] = "diary"
+    if acct and any(p["kind"] == "spirit" and p["crop"] for p in patches.status(db, acct)["patches"]):
+        out["spirit_trees"] = "patch"
+    return out
 
 
 def _needs(stop, kind, ctx, run_title):
@@ -886,8 +911,14 @@ def plan_run(key, ctx, mode="xp"):
         if s["place"] not in places:
             places.append(s["place"])
     minutes = 0.0
+    measured = False
     for p in places:
         ks = [s for s in usable if s["place"] == p]
+        group = "trees" if all(s["kind"] in TREE_LIKE for s in ks) else "patches"
+        if ctx.pace.get(group):
+            minutes += ctx.pace[group]["minutes"]  # your own time from one stop to the next
+            measured = True
+            continue
         minutes += max(STOP_MINUTES.get(s["kind"], 1.0) for s in ks) + 0.3 * (len(ks) - 1)
         minutes += SLOWER_TELEPORT * (by_place.get(p) or {}).get("index", 0)
         minutes += 2.0 if (by_place.get(p) or {}).get("missing") else 0  # no teleport: a walk or a slower route
@@ -902,7 +933,7 @@ def plan_run(key, ctx, mode="xp"):
             "xp": xp, "profit": profit, "cost": cost, "minutes": round(minutes, 1), "growth": grow,
             "xpPerHour": xp / minutes * 60 if minutes else 0, "profitPerHour": profit / minutes * 60 if minutes else 0,
             "perDay": {"runs": runs_day, "xp": xp * runs_day, "profit": profit * runs_day},
-            "locked": [s for s in stops if not s["usable"]], "notes": notes,
+            "locked": [s for s in stops if not s["usable"]], "notes": notes, "measured": measured,
             "url": WIKI + "Farming_runs#" + title.replace(" ", "_"), "example": run.get("example")}
 
 
@@ -1003,6 +1034,11 @@ def routine(plans, mode="xp"):
     return {"groups": out, "perDay": day}
 
 
+def _tracked(db, acct):
+    from . import patches
+    return patches.status(db, acct) if acct else None
+
+
 def plan_all(db, engine, mode="xp", acct=None, unlocks=None):
     ctx = Context(db, engine, acct, unlocks)
     runs = [plan_run(k, ctx, mode) for k in RUNS]
@@ -1016,8 +1052,9 @@ def plan_all(db, engine, mode="xp", acct=None, unlocks=None):
             "owned": {n: ctx.has(n) for n in ("Magic secateurs", "Bottomless compost bucket", "Farming cape",
                                                "Farmer's strawhat", "Digsite pendant", "Dramen staff")},
             "outfit": outfit_bonus(ctx), "unlocks": sorted(ctx.unlocks), "unlockLabels": UNLOCKS,
+            "ticked": sorted(ctx.ticked), "autoUnlocks": ctx.auto, "pace": ctx.pace,
             "runs": runs, "birdhouse": birds, "ranked": [r["key"] for r in ranked],
-            "routine": routine(plans, mode), "compost": plan_compost(ctx), "source": "OSRS Wiki farming pages (CC BY-NC-SA 3.0)",
+            "routine": routine(plans, mode), "compost": plan_compost(ctx), "tracked": _tracked(db, ctx.acct), "source": "OSRS Wiki farming pages (CC BY-NC-SA 3.0)",
             "fetched": ctx.data.get("fetched")}
 
 

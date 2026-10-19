@@ -54,6 +54,28 @@ public interface BankstandingConfig extends Config
 	}
 
 	@ConfigItem(
+		keyName = "recordFarming",
+		name = "Farming patches and diaries",
+		description = "Record what your farming patches show when you are near them (for ready alerts and run timing) and which achievement diaries you have done",
+		position = 4
+	)
+	default boolean recordFarming()
+	{
+		return true;
+	}
+
+	@ConfigItem(
+		keyName = "recordSlayer",
+		name = "Slayer task",
+		description = "Record your Slayer task, points, streak and blocked tasks for the Slayer advisor",
+		position = 4
+	)
+	default boolean recordSlayer()
+	{
+		return true;
+	}
+
+	@ConfigItem(
 		keyName = "outputFolder",
 		name = "Output folder",
 		description = "Where event files are written. Blank means .runelite/bankstanding in your home folder",

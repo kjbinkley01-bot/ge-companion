@@ -38,6 +38,9 @@ class DemoFeed:
         if not os.path.exists(os.path.join(folder, "gear.done")):
             self._gear()
             open(os.path.join(folder, "gear.done"), "w").close()
+        if not os.path.exists(os.path.join(folder, "farm.done")):
+            self._farm_slayer()
+            open(os.path.join(folder, "farm.done"), "w").close()
 
     GEAR = ["Karil's coif", "Ava's assembler", "Toxic blowpipe", "Black d'hide body", "Black d'hide chaps",
             "Barrows gloves", "Pegasian boots", "Archers ring (i)", "Salve amulet(ei)", "Anti-dragon shield",
@@ -203,6 +206,61 @@ class DemoFeed:
         from .skills import xp_for_level
         lv = {k: [v, xp_for_level(v) + 1000] for k, v in self.LEVELS.items()}
         self._write(now - 2 * 3600, "levels", levels=lv, combat=104)
+
+    # Farming patches, diaries and Slayer --------------------------------------------------
+    # A herb run planted 70 minutes ago (ranarrs, a stop every 1.3 minutes), a tree run four hours
+    # ago, fruit trees this morning, bird houses seeded 55 minutes ago, five Slayer tasks.
+    HERB_RUN = [10548, 11062, 12083, 14391, 6967, 4922]
+    TREE_RUN = [(12594, 0, 35), (12854, 0, 35), (11573, 0, 35), (9781, 0, 35)]  # yew saplings
+    FRUIT_RUN = [(9781, 1, 163), (9777, 0, 163), (11317, 0, 163), (11058, 0, 163)]  # papaya
+
+    def _farm(self, t, region, slots, birds=None):
+        vals = self.state.setdefault("farm", {}).setdefault(region, [0] * 14)  # the region's other patches stay
+        for i, v in slots.items():
+            vals[i] = v
+        vals = list(vals)
+        x, y = (region >> 8) * 64 + 32, (region & 255) * 64 + 32
+        e = {"region": region, "x": x, "y": y, "plane": 0, "vals": vals, "weeds": 0, "tickOffset": None,
+             "tickPrecision": None}
+        if birds:
+            e["birdhouses"] = birds
+        self._write(t, "farm", **e)
+
+    def _farm_slayer(self):
+        now = time.time()
+        for k, (r, idx, v) in enumerate(self.FRUIT_RUN):
+            self._farm(now - 9 * 3600 + k * 65 - 40, r, {idx: 3})
+            self._farm(now - 9 * 3600 + k * 65, r, {idx: v})
+        for k, (r, idx, v) in enumerate(self.TREE_RUN):
+            self._farm(now - 4 * 3600 + k * 70 - 40, r, {idx: 3})
+            self._farm(now - 4 * 3600 + k * 70, r, {idx: v})
+        for k, r in enumerate(self.HERB_RUN):
+            idx = 4 if r == 4922 else 3
+            self._farm(now - 72 * 60 + k * 78 - 30, r, {idx: 3})  # weeded, empty
+            self._farm(now - 72 * 60 + k * 78, r, {idx: 32})  # ranarr, just planted
+        self._farm(now - 55 * 60, 14651, {}, birds=[6, 6, 6, 6])  # mahogany houses, seeded
+        diaries = {"Ardougne": [1, 1, 0, 0], "Desert": [1, 0, 0, 0], "Falador": [1, 1, 0, 0], "Fremennik": [1, 0, 0, 0],
+                   "Kandarin": [1, 1, 0, 0], "Karamja": [1, 1, 1, 0], "Kourend & Kebos": [1, 0, 0, 0],
+                   "Lumbridge & Draynor": [1, 1, 0, 0], "Morytania": [1, 1, 0, 0], "Varrock": [1, 1, 0, 0],
+                   "Western Provinces": [1, 0, 0, 0], "Wilderness": [1, 0, 0, 0]}
+        self._write(now - 2 * 3600, "diaries", diaries=diaries)
+        from .skills import xp_for_level
+        xp = xp_for_level(72) + 1000
+        t = now - 3 * 86400
+        streak = 41
+        for task, n, mins, per in [("Abyssal demons", 150, 48, 150), ("Dust devils", 180, 35, 130),
+                                   ("Kalphite", 160, 30, 90), ("Hellhounds", 140, 40, 116)]:
+            self._write(t, "slayer", count=n, task=task, area=None, original=n, master=6, points=320 + streak * 12,
+                        streak=streak, wildyStreak=0, blocked=["Spiritual creatures", "Drakes"])
+            self._write(t + 60, "xp", skill="Slayer", xp=xp, level=72)
+            xp += n * per
+            self._write(t + mins * 60, "xp", skill="Slayer", xp=xp, level=72)
+            streak += 1
+            self._write(t + mins * 60 + 5, "slayer", count=0, task=None, area=None, original=n, master=6,
+                        points=320 + streak * 12, streak=streak, wildyStreak=0, blocked=["Spiritual creatures", "Drakes"])
+            t += 18 * 3600
+        self._write(now - 3600, "slayer", count=112, task="Gargoyles", area=None, original=130, master=6,
+                    points=320 + streak * 12, streak=streak, wildyStreak=0, blocked=["Spiritual creatures", "Drakes"])
 
     # Live changes ---------------------------------------------------------------------------
     def tick(self, latest):

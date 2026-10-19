@@ -50,6 +50,7 @@ class Engine:
         self.fill_rates = None
         self._notified = {}
         self._last_coach = 0
+        self._farm_at = 0
         self._rates_dirty = False
         self._demo_seeded = False
         self.live = {"events": 0, "last": None, "lastIngest": None, "folder": None}
@@ -357,6 +358,15 @@ class Engine:
             push.send(self.cfg, title, message, event=event)
         return True
 
+    def farm_checks(self, now):
+        """Patches and bird houses that just finished growing (once each), from the plugin's data."""
+        from . import patches
+        try:
+            for key, msg in patches.due_notices(self.db, account.accounts(self.db), now):
+                self.notify(msg, event="farming", key=key, cooldown=30 * 86400, title="Farming")
+        except Exception as e:
+            self._err("farming patches", e)
+
     def live_checks(self, since):
         """After new plugin events: finished offers, then the offer coach (both notify)."""
         for o in self.db.q("SELECT * FROM ge_offer_log WHERE closed>? AND state IN ('BOUGHT', 'SOLD') "
@@ -479,6 +489,9 @@ class Engine:
             if n:
                 account.sync_flips(self.db, self.tax)
                 self.live_checks(int(now) - 120)
+            if now - self._farm_at > 60:
+                self._farm_at = now
+                self.farm_checks(int(now))
             if self.rows and now - self._last_coach > 300:
                 self._last_coach = now
                 if self._rates_dirty:

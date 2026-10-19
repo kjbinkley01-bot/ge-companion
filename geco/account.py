@@ -66,8 +66,9 @@ ACTIVE = {"BUYING", "SELLING"}
 
 
 def init(db):
+    from . import patches, slayer
     with db.lock:
-        db.conn.executescript(SCHEMA)
+        db.conn.executescript(SCHEMA + patches.SCHEMA + slayer.SCHEMA)
         db.conn.commit()
 
 
@@ -144,6 +145,14 @@ def apply_events(db, events):
             db.run("INSERT INTO progress (acct, levels, combat, levels_t) VALUES (?,?,?,?) ON CONFLICT(acct) DO UPDATE "
                    "SET levels=excluded.levels, combat=excluded.combat, levels_t=excluded.levels_t",
                    (acct, json.dumps(e.get("levels") or {}), e.get("combat"), t))
+        elif kind == "farm":
+            from . import patches
+            patches.apply_farm(db, acct, t, e)
+        elif kind == "diaries":
+            db.kv_set(f"diaries:{acct}", {"t": t, "diaries": e.get("diaries") or {}})
+        elif kind == "slayer":
+            from . import slayer
+            slayer.apply(db, acct, t, e)
         elif kind == "xp":
             db.run("INSERT OR REPLACE INTO xp_log (acct, t, skill, xp, level) VALUES (?,?,?,?,?)",
                    (acct, t, e.get("skill"), e.get("xp"), e.get("level")))
@@ -184,6 +193,11 @@ def progress(db, acct):
     states = {r["name"]: r["state"] for r in db.q("SELECT name, state FROM quest_state WHERE acct=?", (acct,))}
     return {"qp": p.get("qp"), "combat": p.get("combat"), "levels": levels, "quests": states, "t": p.get("t"),
             "known": bool(states or levels)}
+
+
+def diaries(db, acct):
+    """{region: [easy, medium, hard, elite]} as 0 or 1, or {} before the plugin reported them."""
+    return ((db.kv_get(f"diaries:{acct}") or {}).get("diaries") or {}) if acct else {}
 
 
 def quest_times(db, acct=None):

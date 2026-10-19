@@ -29,6 +29,7 @@ import net.runelite.api.Player;
 import net.runelite.api.Quest;
 import net.runelite.api.QuestState;
 import net.runelite.api.Skill;
+import net.runelite.api.coords.WorldPoint;
 import net.runelite.api.events.GameStateChanged;
 import net.runelite.api.events.GameTick;
 import net.runelite.api.events.GrandExchangeOfferChanged;
@@ -158,6 +159,7 @@ public class BankstandingPlugin extends Plugin
 	private ScheduledFuture<?> poller;
 	private int geItem = -1;
 	private final ChangeFilter filter = new ChangeFilter();
+	private final AccountReader.RegionClock regionClock = new AccountReader.RegionClock();
 	private final List<Map<String, Object>> pending = new ArrayList<>();
 	private final Map<Skill, Long> xpWritten = new HashMap<>();
 	private final Map<Skill, int[]> xpLatest = new HashMap<>();
@@ -580,6 +582,17 @@ public class BankstandingPlugin extends Plugin
 			writeRunePouch();
 		}
 		flushXp(false);
+		if (account != null)
+		{
+			if (config.recordFarming())
+			{
+				writeFarm();
+			}
+			if (config.recordSlayer())
+			{
+				writeSlayer();
+			}
+		}
 		// Quest progress, levels and quest points: shortly after login, then once a minute.
 		if (account != null)
 		{
@@ -587,6 +600,10 @@ public class BankstandingPlugin extends Plugin
 			if (ticksSinceLogin == 8 || ticksSinceLogin % 100 == 0)
 			{
 				writeProgress();
+				if (config.recordFarming())
+				{
+					writeDiaries();
+				}
 			}
 		}
 		// The item picked on the GE offer screen: refresh the panel as soon as it changes.
@@ -773,6 +790,93 @@ public class BankstandingPlugin extends Plugin
 			e.put("combat", combat);
 			emit(e);
 		}
+	}
+
+	// Farming, diaries and Slayer (read only) ------------------------------------------------
+
+	/**
+	 * The farming varbits where you stand, once the region has settled and no interface hides
+	 * them. The app decodes them per region (RuneLite's own Time Tracking reads the same values).
+	 */
+	private void writeFarm()
+	{
+		Player me = client.getLocalPlayer();
+		if (me == null)
+		{
+			return;
+		}
+		WorldPoint wp = me.getWorldLocation();
+		int region = wp.getRegionID();
+		if (!regionClock.settled(region) || !AccountReader.FARM_REGIONS.contains(region) || AccountReader.modalOpen(client))
+		{
+			return;
+		}
+		int[] vals = AccountReader.farmValues(client);
+		int[] birds = AccountReader.FOSSIL_REGIONS.contains(region) && wp.getPlane() == 0
+			? AccountReader.birdHouses(client) : new int[0];
+		int[] key = new int[vals.length + birds.length + 1];
+		key[0] = region;
+		System.arraycopy(vals, 0, key, 1, vals.length);
+		System.arraycopy(birds, 0, key, 1 + vals.length, birds.length);
+		if (!filter.changed(account + "farm", key))
+		{
+			return;
+		}
+		Map<String, Object> e = EventWriter.event("farm", account, name, System.currentTimeMillis());
+		e.put("region", region);
+		e.put("x", wp.getX());
+		e.put("y", wp.getY());
+		e.put("plane", wp.getPlane());
+		e.put("vals", vals);
+		e.put("weeds", client.getVarbitValue(VarbitID.FARMING_BLOCKWEEDS));
+		if (birds.length > 0)
+		{
+			e.put("birdhouses", birds);
+		}
+		// The farming tick offset RuneLite's Time Tracking learned for this account, if any.
+		e.put("tickOffset", configManager.getRSProfileConfiguration("timetracking", "farmTickOffset"));
+		e.put("tickPrecision", configManager.getRSProfileConfiguration("timetracking", "farmTickOffsetPrecision"));
+		emit(e);
+	}
+
+	private void writeDiaries()
+	{
+		Map<String, int[]> d = AccountReader.diaries(client);
+		int hash = 0;
+		for (int[] t : d.values())
+		{
+			hash = hash * 31 + java.util.Arrays.hashCode(t);
+		}
+		if (filter.changed(account + "diaries", hash))
+		{
+			Map<String, Object> e = EventWriter.event("diaries", account, name, System.currentTimeMillis());
+			e.put("diaries", d);
+			emit(e);
+		}
+	}
+
+	private void writeSlayer()
+	{
+		int[] v = AccountReader.slayerValues(client);
+		int[] blocked = AccountReader.blockedIds(client);
+		int[] key = new int[v.length + blocked.length];
+		System.arraycopy(v, 0, key, 0, v.length);
+		System.arraycopy(blocked, 0, key, v.length, blocked.length);
+		if (!filter.changed(account + "slayer", key))
+		{
+			return;
+		}
+		Map<String, Object> e = EventWriter.event("slayer", account, name, System.currentTimeMillis());
+		e.put("count", v[0]);
+		e.put("task", v[0] > 0 ? AccountReader.taskName(client, v[1], v[2]) : null);
+		e.put("area", v[0] > 0 ? AccountReader.areaName(client, v[3]) : null);
+		e.put("original", v[4]);
+		e.put("master", v[5]);
+		e.put("points", v[6]);
+		e.put("streak", v[7]);
+		e.put("wildyStreak", v[8]);
+		e.put("blocked", AccountReader.blockedNames(client, blocked));
+		emit(e);
 	}
 
 	// Loot and XP ------------------------------------------------------------------------
