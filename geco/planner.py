@@ -15,6 +15,7 @@ import time
 
 from . import access, account, questtime, skillguides, training
 from .quests import load, norm
+from .skills import level_for_xp, xp_for_level
 
 SKILL_ORDER = ["Attack", "Strength", "Defence", "Ranged", "Prayer", "Magic", "Runecraft", "Construction",
                "Hitpoints", "Agility", "Herblore", "Thieving", "Crafting", "Fletching", "Slayer", "Hunter",
@@ -202,8 +203,113 @@ def build(db, engine, cfg, goal, acct=None, mode="fastest", now=None):
         for o in wg:
             o["met"] = a + st >= 130 or a >= 99 or st >= 99
 
+    # Quest XP. Rewards from quests done before a skill is needed count toward it, choice rewards
+    # go where they save the most training, and quests you can already do are added when their
+    # XP saves more training time than the quest takes.
+    short = {}
+    for s_, d in skills.items():
+        lv, xp = levels.get(s_, (None, None))
+        if lv is not None and lv < d["level"]:
+            have = xp if xp is not None else xp_for_level(lv)
+            short[s_] = xp_for_level(d["level"]) - have
+
+    def first_need(sk):
+        cur = levels.get(sk, (0, 0))[0] or 0
+        for i, n in enumerate(order):
+            r = Q[n]["req"]["skills"].get(sk)
+            if r and cur < r["level"]:
+                return i
+        return len(order)
+
+    hpx = {}  # training hours per XP for each short skill, to value quest XP
+    for s_ in short:
+        lv, xp = levels[s_]
+        p0 = training.plan_skill(s_, lv, xp, skills[s_]["level"], price, mode, measured.get(s_), guides=guides,
+                                 levels=levels, quest_state=quest_state)
+        hpx[s_] = (p0["hours"] / p0["xp"]) if p0 and p0.get("hours") else 1 / 30000
+
+    def value(rw, rem, ok):
+        """(hours of training saved, picks, fixed parts) for a quest's rewards given what is still short."""
+        rem = dict(rem)
+        saved, fixed, picks = 0.0, [], []
+        for sk, amt in (rw.get("xp") or {}).items():
+            if ok(sk) and rem.get(sk, 0) > 0:
+                take = min(amt, rem[sk])
+                saved += take * hpx[sk]
+                rem[sk] -= take
+                fixed.append((sk, amt))
+        for c in rw.get("choices") or []:
+            for _ in range(c.get("count") or 1):
+                pool = [sk for sk in rem if rem[sk] > 0 and ok(sk) and ("any" in c["skills"] or sk in c["skills"])]
+                if not pool:
+                    break
+                sk = max(pool, key=lambda k: min(c["xp"], rem[k]) * hpx[k])
+                take = min(c["xp"], rem[sk])
+                saved += take * hpx[sk]
+                rem[sk] -= take
+                picks.append((sk, c["xp"]))
+        return saved, picks, fixed, rem
+
+    quest_xp = {s_: [] for s_ in short}  # skill: [(quest, xp, picked)]
+    xp_notes = {}  # quest: {"gives": [...], "picks": [...], "saves": hours}
+
+    def apply(n, i_pos):
+        nonlocal short
+        rw = Q[n].get("rewards") or {}
+        saved, picks, fixed, rem = value(rw, short, lambda sk: i_pos < first_need(sk))
+        for sk, amt in fixed:
+            quest_xp[sk].append((n, amt, False))
+        for sk, amt in picks:
+            quest_xp[sk].append((n, amt, True))
+        if fixed or picks:
+            grouped = {}
+            for sk, a in picks:  # "4 x 20,000 XP on Attack"
+                g = grouped.setdefault((sk, a), {"skill": sk, "xp": a, "count": 0})
+                g["count"] += 1
+            xp_notes[n] = {"gives": [{"skill": sk, "xp": a} for sk, a in fixed], "picks": list(grouped.values()),
+                           "saves": saved}
+        short = rem
+        return saved
+
+    for i, n in enumerate(order):
+        apply(n, i)
+    xp_filler = []
+    if short and any(v > 0 for v in short.values()):
+        cands = []
+        for n, q in Q.items():
+            rw = q.get("rewards") or {}
+            if n in seen or done(n) or not (rw.get("xp") or rw.get("choices")):
+                continue
+            r = q["req"]
+            if any(not done(p_) for p_ in r["quests"]):
+                continue
+            if any((levels.get(sk_, (1, 0))[0] or 1) < d_["level"] for sk_, d_ in r["skills"].items()):
+                continue
+            if r.get("qp") and r["qp"] > qp_now:
+                continue
+            cands.append(n)
+        for _ in range(8):
+            best, best_net = None, 0.25  # must save at least 15 minutes more than it takes
+            for n in cands:
+                if n in xp_filler:
+                    continue
+                saved = value(Q[n].get("rewards") or {}, short, lambda sk: True)[0]
+                net = saved - questtime.estimate(Q[n], Q, pace["factor"])["minutes"] / 60
+                if net > best_net:
+                    best, best_net = n, net
+            if not best:
+                break
+            xp_filler.append(best)
+            apply(best, -1)
+        for n in xp_filler:
+            seen.add(n)
+            need.append(n)
+            est[n] = questtime.estimate(Q[n], Q, pace["factor"])
+        order = xp_filler + order  # nothing stands in their way, so they go first
+
     # Skill tasks, placed before the first quest that needs them.
     skill_tasks = {}
+    covered = {}
     for s, d in skills.items():
         lv, xp = levels.get(s, (None, None))
         if lv is None:
@@ -212,18 +318,34 @@ def build(db, engine, cfg, goal, acct=None, mode="fastest", now=None):
             continue
         if lv >= d["level"]:
             continue
+        got = quest_xp.get(s) or []
+        xp0 = xp if xp is not None else xp_for_level(lv)
+        xp = xp0 + sum(a for _, a, _ in got)
+        lv_from = lv
+        lv = max(lv, level_for_xp(xp))
+        if lv >= d["level"]:
+            covered[s] = got
+            continue
+        qx = []
+        for n, a, pk in got:  # one line per quest
+            if qx and qx[-1]["quest"] == n:
+                qx[-1]["xp"] += a
+                qx[-1]["picked"] = qx[-1]["picked"] or pk
+            else:
+                qx.append({"quest": n, "xp": a, "picked": pk})
         gap = d["level"] - lv
         boost = training.best_boost(s, gap, lv, price, guides) if d["boostable"] else None
         if boost:
             skill_tasks[s] = {"type": "boost", "skill": s, "from": lv, "target": d["level"], "boost": boost[0],
-                              "amount": boost[1], "item": boost[2], "why": d["why"], "hours": 0.0,
+                              "amount": boost[1], "item": boost[2], "why": d["why"], "hours": 0.0, "questXp": qx,
                               "gp": price(boost[2], "buy") if boost[2] else None,
                               "title": f"Boost {s} {lv} to {d['level']} with a {boost[0].lower()} (+{boost[1]})"}
             continue
         p = training.plan_skill(s, lv, xp, d["level"], price, mode, measured.get(s), guides=guides, levels=levels,
                                 quest_state=quest_state)
         if p:
-            p.update(type="skill", why=d["why"], title=f"Train {s} {lv} to {d['level']}")
+            p.update(type="skill", why=d["why"], questXp=qx, levelNow=lv_from,
+                     title=f"Train {s} {lv} to {d['level']}" if lv == lv_from else f"Train {s} {lv} to {d['level']} (after quest XP)")
             skill_tasks[s] = p
     tasks = []
     used = set()
@@ -242,14 +364,15 @@ def build(db, engine, cfg, goal, acct=None, mode="fastest", now=None):
                       "start": q.get("start"), "startPlace": q.get("startPlace"), "qp": q.get("qp"),
                       "minutes": e["minutes"], "low": e["low"], "high": e["high"], "estSource": e["source"],
                       "hours": e["minutes"] / 60, "state": _state(prog, n) or 0, "filler": n in filler,
-                      "gatedQp": qp_need if n == qp_for else None,
+                      "gatedQp": qp_need if n == qp_for else None, "forXp": n in xp_filler,
+                      "xpReward": xp_notes.get(n), "rewards": (q.get("rewards") or {}).get("xp") or {},
                       "prereqs": [p for p in q["req"]["quests"] if p in seen],
                       "items": [i["name"] for i in q.get("items") or []][:20],
                       "other": [{"text": o["text"], "met": o.get("met")} for o in other if o.get("quest") == n][:4],
                       "wiki": access.wiki_url(n), "guide": access.wiki_url(n + "/Quick guide")})
     for s, t in skill_tasks.items():
         if s not in used:
-            tasks.insert(0, t)
+            tasks.append(t)  # no quest needs it first, so after the quests (whose XP it counts)
             used.add(s)
 
     # Shopping list across the plan: tools once, consumables added up.
@@ -297,7 +420,8 @@ def build(db, engine, cfg, goal, acct=None, mode="fastest", now=None):
     for s, d in sorted(skills.items(), key=lambda kv: SKILL_ORDER.index(kv[0]) if kv[0] in SKILL_ORDER else 99):
         lv = levels.get(s, (None, None))[0]
         reqs.append({"skill": s, "level": d["level"], "have": lv, "boostable": d["boostable"], "why": d["why"],
-                     "met": lv is not None and lv >= d["level"], "note": d.get("note")})
+                     "met": lv is not None and lv >= d["level"], "note": d.get("note"),
+                     "byQuestXp": s in covered})
     return {
         "goal": goal, "label": label, "acct": acct, "accountKnown": prog["known"], "mode": mode,
         "tasks": tasks, "requirements": reqs,

@@ -155,8 +155,11 @@ def build(app, acct=None, item=None, slot_items=(), since_nid=0, now=None):
                 "tasks": [dict({k: t.get(k) for k in keep}, items=(t.get("items") or [])[:10],
                                other=[o["text"] for o in t.get("other") or [] if not o.get("met")][:3],
                                segments=[{k: sg.get(k) for k in ("method", "from", "to", "xph", "hours")}
-                                         for sg in t.get("segments") or []][:4]) for t in p["tasks"][:8]],
-                "unmet": [r for r in p["requirements"] if not r["met"]],
+                                         for sg in t.get("segments") or []][:4],
+                               picks=[(f"{pk['count']} x " if pk.get("count", 1) > 1 else "") + f"{pk['xp']:,.0f} XP on {pk['skill']}"
+                                      for pk in (t.get("xpReward") or {}).get("picks", [])])
+                          for t in p["tasks"][:8]],
+                "unmet": [r for r in p["requirements"] if not r["met"] and not r.get("byQuestXp")],
                 "shopping": [{"id": x["id"], "name": x["name"], "buy": x["buy"], "cost": x["cost"]} for x in p["shopping"] if x["buy"]][:8],
                 "shoppingCost": p["shoppingCost"],
             }

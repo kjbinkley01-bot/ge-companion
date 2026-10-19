@@ -2931,12 +2931,21 @@ function planTimeline(p) {
   return `<div class="pl-bar" role="img" aria-label="Time by task">${tasks.map((t) => `<span class="pl-seg pl-${t.type}" style="flex:${(t.hours / total).toFixed(4)}" title="${esc(t.title)}: ${hrs(t.hours)}"></span>`).join("")}</div>
     <div class="legend-inline small"><span><i class="pl-quest-k"></i>Quests ${hrs(p.hours.quests)}</span><span><i class="pl-skill-k"></i>Training ${hrs(p.hours.skills)}</span></div>`;
 }
+function questXpLine(t) {
+  const x = t.xpReward;
+  const all = Object.entries(t.rewards || {});
+  if (!x) return all.length ? `<div class="small muted">XP: ${all.map(([k, v]) => `${gp(v)} ${esc(k)}`).join(", ")}</div>` : "";
+  const parts = x.gives.map((g) => `${gp(g.xp)} ${esc(g.skill)}`);
+  const picks = x.picks.map((g) => `put ${g.count > 1 ? `the ${g.count} \u00D7 ${gp(g.xp)} XP rewards` : `the ${gp(g.xp)} XP reward`} on <b>${esc(g.skill)}</b>`);
+  return `<div class="small"><span class="pos">${arrow(1)}</span> ${parts.length ? `Gives ${parts.join(", ")} XP you need` : ""}${parts.length && picks.length ? "; " : ""}${picks.join(", ")}<span class="muted"> · saves about ${hrs(x.saves)} of training</span></div>`;
+}
 function taskCard(t, i) {
   if (t.type === "quest") {
     const range = `${hrs(t.low / 60)} to ${hrs(t.high / 60)}`;
     return `<div class="pl-task"><div class="pl-num">${i}</div><div class="pl-body">
-      <div class="pl-top"><b>${esc(t.title)}</b> <span class="tag">${esc(t.difficulty || "Quest")}</span>${t.state === 1 ? ` <span class="tag spike">Started</span>` : ""}${t.filler ? ` <span class="tag free" title="Added to reach the quest points needed">For quest points</span>` : ""}${t.gatedQp ? ` <span class="tag" title="Needs this many quest points to start">${t.gatedQp} QP</span>` : ""}<span class="pl-time" title="${t.estSource === "guide" ? "Estimated from the quick guide's length (steps, travel, fights, dialogue)" : "From the Wiki's length rating"}${p_pace_note()}">${hrs(t.hours)} <span class="muted small">${range}</span></span></div>
+      <div class="pl-top"><b>${esc(t.title)}</b> <span class="tag">${esc(t.difficulty || "Quest")}</span>${t.state === 1 ? ` <span class="tag spike">Started</span>` : ""}${t.filler ? ` <span class="tag free" title="Added to reach the quest points needed">For quest points</span>` : ""}${t.forXp ? ` <span class="tag free" title="Added because its XP saves more training time than the quest takes">For XP</span>` : ""}${t.gatedQp ? ` <span class="tag" title="Needs this many quest points to start">${t.gatedQp} QP</span>` : ""}<span class="pl-time" title="${t.estSource === "guide" ? "Estimated from the quick guide's length (steps, travel, fights, dialogue)" : "From the Wiki's length rating"}${p_pace_note()}">${hrs(t.hours)} <span class="muted small">${range}</span></span></div>
       <div class="small muted">${esc(t.length || "")}${t.length ? " · " : ""}${t.qp ? `${t.qp} quest point${t.qp > 1 ? "s" : ""} · ` : ""}starts: ${esc(t.start || "-")}</div>
+      ${questXpLine(t)}
       ${t.other && t.other.length ? `<div class="small">${t.other.map((o) => o.met ? `<span class="pos">${arrow(1)}</span> <span class="muted">${esc(o.text)}</span>` : `<span class="warn-txt">${esc(o.text)}</span>`).join("<br>")}</div>` : ""}
       ${t.items && t.items.length ? `<details class="small"><summary class="muted">${t.items.length} items to bring</summary>${t.items.map(esc).join(", ")}</details>` : ""}
       <div class="small pl-links"><a href="${esc(t.guide)}" target="_blank" rel="noopener">Quick guide</a> · <a href="${esc(t.wiki)}" target="_blank" rel="noopener">Wiki</a> · <span class="muted">Steps in game: Quest Helper, "${esc(t.title)}"</span></div></div></div>`;
@@ -2957,6 +2966,7 @@ function taskCard(t, i) {
   const opts = (t.options || []).slice(0, 5).map((o) => `<li>${wl(o.url, o.method)} <span class="muted">(${short(o.xph)}/h${o.gpPerXp != null && o.gpPerXp > 0.05 ? `, ${gp(Math.round(o.gpPerXp * 100) / 100)} gp/xp` : ""}${o.minLevel > t.from ? `, from level ${o.minLevel}` : ""})</span>${o.needs && o.needs.length ? ` <span class="warn-txt">needs ${esc(o.needs.join(", "))}</span>` : ""}</li>`).join("");
   const src = t.rateSource === "yours" ? "your measured XP rate" : t.rateSource === "wiki" ? `the Wiki's ${esc(t.skill)} training guide` : "the Wiki's guide and the built in table";
   return `<div class="pl-task pl-t-skill"><div class="pl-num">${i}</div><div class="pl-body"><div class="pl-top"><b>${esc(t.title)}</b> <span class="tag">${esc(t.skill)}</span><span class="pl-time">${hrs(t.hours)}</span></div>
+    ${t.questXp && t.questXp.length ? `<div class="small"><span class="pos">${arrow(1)}</span> Counts ${t.questXp.map((q) => `${gp(q.xp)} XP from ${esc(q.quest)}${q.picked ? " (your pick)" : ""}`).join(", ")} from quests earlier in the plan</div>` : ""}
     <div class="small muted">Needed for ${esc(t.why)} · ${gp(t.xp)} XP${t.gp ? ` · costs about ${short(t.gp)}` : t.gp === 0 ? " · free" : t.gp < 0 ? " · makes money" : ""} · rates from ${src}</div>
     <div class="small pl-segs">${segs}</div>
     ${opts ? `<details class="small"><summary class="muted">Other ways to train</summary><ul class="pl-opts">${opts}</ul></details>` : ""}</div></div>`;
@@ -3009,7 +3019,7 @@ renderers.planner = async function (host) {
       <div>
         <div class="card"><h3 style="margin-top:0">Requirements</h3>
           <table class="pl-req">${thead([{ label: "Skill" }, { label: "Need", num: 1 }, { label: "You", num: 1 }, { label: "" }], null)}<tbody>
-          ${p.requirements.map((r) => `<tr class="static"><td>${esc(r.skill)}${r.boostable || r.met ? "" : ` <span class="muted small" title="Can't be boosted for this requirement">no boost</span>`}</td><td class="num">${r.level}</td><td class="num">${r.have ?? "?"}</td><td>${r.met ? `<span class="pos">${arrow(1)}met</span>` : r.have == null ? `<span class="muted">check</span>` : `<span class="neg">${arrow(-1)}${r.level - r.have} short</span>`}</td></tr>`).join("")}</tbody></table>
+          ${p.requirements.map((r) => `<tr class="static"><td>${esc(r.skill)}${r.boostable || r.met ? "" : ` <span class="muted small" title="Can't be boosted for this requirement">no boost</span>`}</td><td class="num">${r.level}</td><td class="num">${r.have ?? "?"}</td><td>${r.met ? `<span class="pos">${arrow(1)}met</span>` : r.byQuestXp ? `<span class="pos" title="Quest XP earlier in the plan gets you there">${arrow(1)}from quest XP</span>` : r.have == null ? `<span class="muted">check</span>` : `<span class="neg">${arrow(-1)}${r.level - r.have} short</span>`}</td></tr>`).join("")}</tbody></table>
           ${p.other.length ? `<h4>Also needed</h4><ul class="pl-other">${p.other.map((o) => `<li>${o.met === true ? `<span class="pos">${arrow(1)}</span> ` : o.met === false ? `<span class="neg">${arrow(-1)}</span> ` : ""}${esc(o.text)} <span class="muted small">(${esc(o.quest || "")})</span></li>`).join("")}</ul>` : ""}
           ${p.combat.need ? `<p class="small">Combat level ${p.combat.need} needed; you're ${p.combat.have ?? "?"}.</p>` : ""}
           ${unmet.length ? "" : `<p class="small pos">${arrow(1)}All skill levels met.</p>`}</div>

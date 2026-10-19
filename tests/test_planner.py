@@ -396,5 +396,72 @@ class SkillGuideTests(unittest.TestCase):
         self.assertIn("Agility", g["boosts"])
 
 
+
+class QuestXpTests(unittest.TestCase):
+    """Quest XP rewards count toward training, and quests are added when their XP is quicker."""
+
+    def test_parse_rewards(self):
+        r = quests.parse_rewards("""* {{SCP|Thieving|80,000|link=yes}} [[experience]]
+* {{SCP|Hunter|50,000}} [[Hunter]] experience
+*4,650 [[Experience]] in your choice of two skills: {{SCP|Agility}} [[Agility]], or {{SCP|Thieving}} [[Thieving]].
+* An antique lamp rewarding 5,000 XP in any skill of at least level 30
+* Four magic lamps offering 20,000 {{SCP|Slayer}} [[Slayer]] XP and 5,000 {{SCP|Magic}} [[Magic]] XP
+* [[Duradel's notes]] grants {{SCP|Slayer}} experience equal to 15x the player's Slayer level""")
+        self.assertEqual(r["xp"], {"Thieving": 80000, "Hunter": 50000, "Slayer": 20000, "Magic": 5000})
+        self.assertEqual(r["choices"], [{"xp": 4650, "count": 2, "skills": ["Agility", "Thieving"]},
+                                        {"xp": 5000, "count": 1, "skills": ["any"]}])
+        self.assertEqual(len(r["notes"]), 1)
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.db = DB(os.path.join(self.dir.name, "t.sqlite3"))
+        account.init(self.db)
+        networth.init(self.db)
+        quests.init(self.db)
+
+    def tearDown(self):
+        self.db.conn.close()
+        self.dir.cleanup()
+
+    def plan(self, Q, lv, goal):
+        quests.store(self.db, Q)
+        states = {n: 0 for n in Q}
+        account.apply_events(self.db, [
+            {"v": 1, "t": 1000, "type": "quests", "acct": ACCT, "name": "Z", "states": states, "qp": 10},
+            {"v": 1, "t": 1000, "type": "levels", "acct": ACCT, "name": "Z",
+             "levels": {k: [v, xp_for_level(v)] for k, v in lv.items()}, "combat": 60}])
+        return planner.build(self.db, FakeEngine(), config.DEFAULTS, goal, acct=ACCT)
+
+    def rewards(self, xp=None, choices=None):
+        return {"xp": xp or {}, "choices": choices or [], "notes": []}
+
+    def test_plan_quest_xp_counts_and_lamp_goes_where_needed(self):
+        pre = quest("Pre", length="Short")
+        pre["rewards"] = self.rewards({"Thieving": 1000}, [{"xp": 50000, "count": 1, "skills": ["any"]}])
+        goal = quest("Goal", prereqs=["Pre"], skills={"Thieving": (54, False), "Agility": (50, False)})
+        p = self.plan({"Pre": pre, "Goal": goal}, {"Thieving": 50, "Agility": 49}, {"type": "quest", "name": "Goal"})
+        tasks = {t.get("skill") or t.get("quest"): t for t in p["tasks"]}
+        # 50,000 lamp XP saves more on Thieving (50 to 54 needs about 49.5k) than Agility (one level).
+        self.assertEqual(tasks["Pre"]["xpReward"]["picks"], [{"skill": "Thieving", "xp": 50000, "count": 1}])
+        self.assertNotIn("Thieving", tasks)  # covered by quest XP
+        self.assertTrue(next(r for r in p["requirements"] if r["skill"] == "Thieving")["byQuestXp"])
+        self.assertIn("Agility", tasks)
+
+    def test_quest_added_for_xp_only_when_quicker(self):
+        goal = quest("Goal", skills={"Thieving": (40, False)})
+        big = quest("Big reward", length="Very Short")
+        big["rewards"] = self.rewards({"Thieving": 30000})
+        tiny = quest("Tiny reward", length="Very Long")
+        tiny["rewards"] = self.rewards({"Thieving": 500})
+        p = self.plan({"Goal": goal, "Big reward": big, "Tiny reward": tiny}, {"Thieving": 20},
+                      {"type": "quest", "name": "Goal"})
+        qs = [t["quest"] for t in p["tasks"] if t["type"] == "quest"]
+        self.assertEqual(qs[0], "Big reward")
+        self.assertNotIn("Tiny reward", qs)
+        first = next(t for t in p["tasks"] if t["type"] == "quest")
+        self.assertTrue(first["forXp"])
+        self.assertGreater(first["xpReward"]["saves"], first["hours"])
+
+
 if __name__ == "__main__":
     unittest.main()

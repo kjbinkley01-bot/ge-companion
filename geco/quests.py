@@ -150,6 +150,79 @@ def parse_requirements(text, quest_names):
     return {"skills": skills, "qp": qp, "combat": combat, "quests": out, "other": other[:12]}
 
 
+SCP_ANY = re.compile(r"\{\{\s*SCP\s*\|\s*([A-Za-z ]+?)\s*(?:\|\s*([\d,.]+))?\s*(?:\|[^}]*)?\}\}", re.I)
+XP_NUM = re.compile(r"([\d,]+(?:\.\d+)?)\s*(?:\[\[)?\s*(?:[A-Za-z]+\s+){0,2}(?:experience|xp)\b", re.I)
+COUNT = {"two": 2, "twice": 2, "three": 3, "four": 4, "2": 2, "3": 3, "4": 4}
+
+
+COMBAT = ["Attack", "Strength", "Defence", "Ranged", "Magic", "Hitpoints", "Prayer"]
+
+
+def parse_rewards(text):
+    """XP a quest gives: {"xp": {skill: amount}, "choices": [{xp, count, skills}], "notes": [text]}.
+    Fixed rewards are lines like "{{SCP|Magic|5,000}} Magic experience" (or lamps that name their
+    skills and amounts). A choice is one amount for a skill picked from a list ("4,650
+    experience in your choice of two skills: ...", "a lamp ... in any skill"). Anything mixed,
+    or that depends on level, is kept as a note."""
+    xp, choices, notes = {}, [], []
+
+    def add(sk, amt):
+        xp[sk] = xp.get(sk, 0) + amt
+
+    for line in (text or "").splitlines():
+        body = line.lstrip("*").strip()
+        low = body.lower()
+        if "experience" not in low and not re.search(r"\bxp\b", low):
+            continue
+        scps = [(SKILL_SET.get(sk.strip().lower()), amt) for sk, amt in SCP_ANY.findall(body)]
+        scps = [(sk, amt) for sk, amt in scps if sk]
+        nums = XP_NUM.findall(plain(body))
+        # "20,000 {{SCP|Slayer}} [[Slayer]] XP": an amount written before a skill icon.
+        pairs = [(SKILL_SET.get(sk.lower()), float(n.replace(",", "")))
+                 for n, sk in re.findall(r"([\d,]{3,})\s*\{\{\s*SCP\s*\|\s*([A-Za-z]+)\s*\}\}", body)]
+        pairs = [(sk, n) for sk, n in pairs if sk]
+        choice = re.search(r"choice|choose|choosing|either|\bany\b|combat skill|\bor\b", low)
+        level_based = re.search(r"\blevel\b.{0,20}\btimes\b|times (?:your|the player's)|equal to|multiplied", low)
+        if level_based:
+            notes.append(plain(body)[:200])
+            continue
+        fixed = [(sk, float(a.replace(",", ""))) for sk, a in scps if a]
+        if not choice and (fixed or pairs):
+            for sk, amt in fixed + pairs:
+                add(sk, amt)
+            continue
+        if not choice:
+            for m in re.finditer(r"([\d,]+(?:\.\d+)?)\s*\[\[([A-Za-z]+)\]\]\s*(?:\[\[)?experience", body, re.I):
+                sk = SKILL_SET.get(m.group(2).lower())
+                if sk:
+                    add(sk, float(m.group(1).replace(",", "")))
+            continue
+        listed = sorted({sk for sk, a in scps if not a})
+        if not listed:  # skills written as words: "in Magic, Ranged, Strength, Attack, Defence, or Hitpoints"
+            words = re.findall(r"[A-Za-z]+", plain(body))
+            listed = sorted({SKILL_SET[w.lower()] for w in words if w.lower() in SKILL_SET})
+        if len(nums) == 1 and not fixed:
+            amount = float(nums[0].replace(",", ""))
+            cm = re.search(r"\b(two|twice|three|four)\b", low)
+            xm = re.search(r"\b([2-9])\s*(?:x|lamps|lots|tomes|books)\b", low)
+            count = int(xm.group(1)) if xm else COUNT[cm.group(1)] if cm else 1
+            anyskill = re.search(r"\bany\b.{0,12}\bskills?\b|skills? of (?:your|the player'?s?) (?:choice|choosing)",
+                                 plain(body).lower())
+            if anyskill and "combat" not in low:
+                skills = ["any"]
+            elif "combat skill" in low:
+                but = re.split(r"apart from|except|other than", body, maxsplit=1)
+                skip = {sk for sk, _ in [(SKILL_SET.get(x.strip().lower()), 0) for x in re.findall(r"\[\[([A-Za-z]+)\]\]", but[1])]} if len(but) > 1 else set()
+                skills = [c for c in COMBAT if c not in skip]
+            else:
+                skills = listed
+            if skills:
+                choices.append({"xp": amount, "count": count, "skills": skills})
+                continue
+        notes.append(plain(body)[:200])
+    return {"xp": {k: round(v, 1) for k, v in xp.items()}, "choices": choices, "notes": notes[:4]}
+
+
 QTY = re.compile(r"^\s*(\d[\d,]*)\s*(?:x\s*)?", re.I)
 
 
@@ -215,6 +288,7 @@ def parse_quest(title, text, quest_names, guide_text=None):
         "items": parse_items(d.get("items", "")),
         "recommended": parse_items(d.get("recommended", "")),
         "kills": plain(d.get("kills", ""))[:300],
+        "rewards": parse_rewards(r.get("rewards", "")),
         "guide": guide_features(walk),
         "hasQuickGuide": guide_text is not None,
     }

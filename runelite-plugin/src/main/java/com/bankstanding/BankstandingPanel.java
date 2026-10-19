@@ -1054,6 +1054,11 @@ class BankstandingPanel extends PluginPanel
 			{
 				JsonObject t = tasks.get(i).getAsJsonObject();
 				ls.add(Ui.kv((i + 1) + ". " + Fmt.str(t, "title"), hours(Fmt.num(t, "hours"))));
+				String picks = picks(t);
+				if (picks != null)
+				{
+					ls.add(Ui.wrap("    XP reward: " + picks, Ui.MUTED, 190));
+				}
 			}
 			list.add(ls);
 			goal.add(list);
@@ -1128,6 +1133,11 @@ class BankstandingPanel extends PluginPanel
 			{
 				s.add(Ui.wrap(e.getAsString(), Ui.WARN, 190));
 			}
+			String picks = picks(t);
+			if (picks != null)
+			{
+				s.add(Ui.wrap("XP reward: put " + picks + ".", Ui.UP, 190));
+			}
 			s.add(Ui.wrap("For each step, open Quest Helper and pick \"" + Fmt.str(t, "title") + "\".", Ui.MUTED, 190));
 		}
 		else if ("boost".equals(type))
@@ -1165,6 +1175,17 @@ class BankstandingPanel extends PluginPanel
 		}
 		card.add(s);
 		return card;
+	}
+
+	/** Where to put a quest's choice XP reward, from the plan ("5,000 XP on Agility"), or null. */
+	private static String picks(JsonObject t)
+	{
+		StringBuilder b = new StringBuilder();
+		for (JsonElement e : Fmt.arr(t, "picks"))
+		{
+			b.append(b.length() > 0 ? ", " : "").append(e.getAsString());
+		}
+		return b.length() > 0 ? b.toString() : null;
 	}
 
 	// Plumbing -------------------------------------------------------------------------------

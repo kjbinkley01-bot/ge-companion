@@ -78,7 +78,9 @@ A free alternative to GE Tracker premium, built only on public, read-only data.
   lists, then wikitext and `/Quick guide` pages 50 titles per request, a second apart), parsed
   from `{{Quest details}}` (SCP skill lines with `{{Boostable|no}}`, the prerequisite tree:
   only quests directly under "Completion of the following quests" are a quest's own, the
-  Warriors' Guild line is kind `warriors_guild`) and `{{Quest rewards|qp=}}`. Table
+  Warriors' Guild line is kind `warriors_guild`), `{{Quest rewards|qp=}}` and its XP
+  (`parse_rewards`: fixed `{xp}`, `choices` of an amount over listed skills or "any", lamps that
+  name skills count as fixed, mixed or level based rewards are `notes`). Table
   `quest_data`, refreshed weekly (`quests_enabled`); `geco/quests_snapshot.json` ships a parsed
   copy for first start and demo mode. `norm()` matches RuneLite and Wiki names.
 * `geco/questtime.py`: quest minutes. Wiki length rating to (typical, low, high) anchors; a ridge
@@ -105,7 +107,11 @@ A free alternative to GE Tracker premium, built only on public, read-only data.
   level per skill, QP filler by minutes per QP among quests already doable, order by
   prerequisites then same start place then shortest, skill tasks before the first quest that
   needs them (boost if boostable and covered, else training), shopping list (quantities over
-  one add up, else counted once) at instant-buy minus holdings. Active goal in kv
+  one add up, else counted once) at instant-buy minus holdings. Quest XP: rewards of quests
+  placed before a skill is first needed count toward it (choices go to the short skill where
+  they save the most training hours), and doable quests are added first (`forXp`) when their XP
+  saves at least 15 minutes more training than the quest takes. Quest tasks carry `xpReward`
+  (skill tasks' `xp` is XP still needed). Active goal in kv
   `planner_goal`. Endpoints `/api/planner/catalog`, `/api/planner`, POST `/api/planner/goal`.
   Quest steps are left to Quest Helper. Display only.
 * `geco/account.py`: ingests plugin files incrementally (byte offsets, whole lines only), keeps

@@ -165,7 +165,10 @@ def candidates(skill, guides=None):
     """Every method for a skill: the Wiki's, then the table's for anything the Wiki lacks."""
     out = []
     for m in (guides or {}).get("methods", {}).get(skill, []):
-        out.append({"name": m["name"], "lo": m["lo"], "hi": m["hi"], "curve": m.get("curve") or [],
+        # A flat rate quoted for a "1-99" method is the rate near the top (the best garden, the
+        # best tree), so it is scaled down at low levels.
+        wide = not m.get("curve") and m["lo"] <= 20 and m["hi"] - m["lo"] >= 50 and skill != "Prayer"
+        out.append({"name": m["name"], "lo": m["lo"], "hi": m["hi"], "curve": m.get("curve") or [], "wide": wide,
                     "typical": m.get("typical"), "gpPerXp": m.get("gpPerXp"), "req": m.get("req") or {},
                     "items": m.get("items") or [], "summary": m.get("summary") or "", "url": m.get("url"),
                     "source": "wiki", "fastest": m.get("fastest")})
@@ -185,7 +188,7 @@ def method_rate(c, level):
         ok = [r for lv, r in c["curve"] if lv <= level]
         return max(ok) if ok else c["curve"][0][1]
     if c["typical"]:
-        return c["typical"]
+        return c["typical"] * (max(0.3, min(1.0, level / 80)) if c.get("wide") else 1.0)
     if c.get("spec"):
         return rate_at(c["spec"], level)
     return None
