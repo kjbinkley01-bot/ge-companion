@@ -223,7 +223,7 @@ def locked(c, levels, quest_state):
 
 
 def plan_skill(skill, level, xp, target, price, mode="fastest", measured=None, members=True,
-               guides=None, levels=None, quest_state=None):
+               guides=None, levels=None, quest_state=None, extra=None):
     """How to get `skill` from (level, xp) to `target`: one or more stretches, each with the best
     method you can use there, plus hours and gp."""
     start_xp = xp if xp is not None else xp_for_level(level)
@@ -231,7 +231,7 @@ def plan_skill(skill, level, xp, target, price, mode="fastest", measured=None, m
     if need <= 0:
         return None
     levels = levels or {}
-    cands = candidates(skill, guides)
+    cands = candidates(skill, guides) + [dict(c) for c in (extra or {}).get(skill, [])]
     for c in cands:
         c["needs"] = locked(c, levels, quest_state)
         c["cost"] = method_cost(c, skill, price)

@@ -28,7 +28,7 @@ from urllib.parse import quote
 
 from .quests import plain
 
-VERSION = 1
+VERSION = 2
 SNAPSHOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "setups_snapshot.json")
 WIKI = "https://oldschool.runescape.wiki/w/"
 # Inventory Setups stores equipment by EquipmentInventorySlot index.
@@ -419,7 +419,9 @@ class Items:
             return None
         n = name.strip()
         low = n.lower()
-        for cand in (low, low + "(4)", re.sub(r"\(\d\)$", "(4)", low), low + "(3)"):
+        # Charged items are sold by charge count ("Amulet of glory(4)", "Digsite pendant (5)").
+        charged = [low + f"{sp}({n})" for n in (4, 3, 5, 6, 8, 2, 1) for sp in ("", " ")]
+        for cand in [low, re.sub(r"\s?\(\d\)$", "(4)", low)] + charged:
             if cand in self.ge:
                 iid = self.ge[cand]
                 m = self.engine.mapping.get(iid) or {}
@@ -564,7 +566,7 @@ def _inventory(cells, items, own, size=28):
     return out
 
 
-def from_items(kind, title, subtitle, names, items, own, url=None, eq_names=None, notes=""):
+def from_items(kind, title, subtitle, names, items, own, url=None, eq_names=None, notes="", allow=()):
     """A setup from a list of (name, qty): quest items or a guide's setup."""
     eq = {}
     for slot, name in (eq_names or {}).items():
@@ -579,7 +581,7 @@ def from_items(kind, title, subtitle, names, items, own, url=None, eq_names=None
     inv, extra, loose = [None] * 28, [], []
     k = 0
     for name, qty in names:
-        if not name or name.lower() in GENERIC:
+        if not name or (name.lower() in GENERIC and name.lower() not in allow):
             continue
         info = items.find(name)
         if not info and kind == "quest":
@@ -759,7 +761,7 @@ def _method(guides, skill, name):
 
 def build(db, engine, key, acct=None, ctx=None):
     """A setup by key: "boss|Vorkath|0", "quest|Dragon Slayer II", "method|Agility|Hallowed Sepulchre",
-    "mine|3". Raises KeyError when the key is unknown."""
+    "run|herb" (a farming run, "run|herb|value" for best value), "mine|3". Raises KeyError when the key is unknown."""
     ctx = ctx or _context(db, engine, acct)
     items, own = ctx["items"], ctx["own"]
     kind, _, rest = key.partition("|")
@@ -782,6 +784,12 @@ def build(db, engine, key, acct=None, ctx=None):
                        eq_names=su["eq"], notes=f"{skill} training at {name}, setup from the OSRS Wiki's guide.")
         s["rp"] = [c for c in _inventory([tuple(c) for c in su.get("rp") or []], items, own, size=4) if c]
         s = finish(s)
+    elif kind == "run":
+        from . import farming
+        run, _, mode = rest.partition("|")
+        if run not in farming.RUNS and run not in ("birdhouse", "supercompost", "willow"):
+            raise KeyError(key)
+        s, _ = farming.run_setup(db, engine, run, mode or "xp", ctx["acct"])
     elif kind == "mine":
         row = db.one("SELECT * FROM setups_custom WHERE id=?", (int(rest),))
         if not row:
@@ -848,10 +856,14 @@ def catalog(db, engine, cfg, acct=None):
                                  "lo": m["lo"], "hi": m["hi"]})
     quest_rows = [{"key": f"quest|{n}", "title": n, "items": len(q.get("items") or [])}
                   for n, q in sorted(ctx["quests"].items()) if q.get("items")]
+    from . import farming
+    runs = [{"key": f"run|{k}", "title": t} for k, (t, _) in farming.RUNS.items()] + \
+        [{"key": "run|birdhouse", "title": "Bird house run"}, {"key": "run|supercompost", "title": "Supercompost run"},
+         {"key": "run|willow", "title": "Willow branch run"}]
     mine = [{"key": f"mine|{r['id']}", "title": r["name"], "updated": r["updated"],
              **(score(f"mine|{r['id']}") or {})} for r in custom_list(db)]
     return {"acct": ctx["acct"], "accountKnown": bool(ctx["own"]), "plan": plan, "planLabel": label,
-            "bosses": bosses, "skilling": skilling, "quests": quest_rows, "mine": mine}
+            "bosses": bosses, "skilling": skilling, "runs": runs, "quests": quest_rows, "mine": mine}
 
 
 def export_file(folder, name, portables):

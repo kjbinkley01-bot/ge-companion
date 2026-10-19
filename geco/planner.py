@@ -108,6 +108,19 @@ def build(db, engine, cfg, goal, acct=None, mode="fastest", now=None):
     pace = questtime.pace(db, acct, Q, sessions) if acct else {"factor": 1.0, "n": 0}
     measured = training.measured_rates(db, acct, now=now) if acct else {}
     guides = skillguides.load(db)
+    extras = {}
+
+    def extra_methods(skill):
+        """Methods beyond the guides: Farming runs planned for this account."""
+        if skill != "Farming":
+            return None
+        if "Farming" not in extras:
+            from . import farming
+            try:
+                extras["Farming"] = farming.training_methods(db, engine, acct, mode)
+            except Exception:  # noqa: BLE001 - a plan without runs is still a plan
+                extras["Farming"] = []
+        return {"Farming": extras["Farming"]}
 
     def done(n):
         return _state(prog, n) == 2
@@ -225,7 +238,7 @@ def build(db, engine, cfg, goal, acct=None, mode="fastest", now=None):
     for s_ in short:
         lv, xp = levels[s_]
         p0 = training.plan_skill(s_, lv, xp, skills[s_]["level"], price, mode, measured.get(s_), guides=guides,
-                                 levels=levels, quest_state=quest_state)
+                                 levels=levels, quest_state=quest_state, extra=extra_methods(s_))
         hpx[s_] = (p0["hours"] / p0["xp"]) if p0 and p0.get("hours") else 1 / 30000
 
     def value(rw, rem, ok):
@@ -342,7 +355,7 @@ def build(db, engine, cfg, goal, acct=None, mode="fastest", now=None):
                               "title": f"Boost {s} {lv} to {d['level']} with a {boost[0].lower()} (+{boost[1]})"}
             continue
         p = training.plan_skill(s, lv, xp, d["level"], price, mode, measured.get(s), guides=guides, levels=levels,
-                                quest_state=quest_state)
+                                quest_state=quest_state, extra=extra_methods(s))
         if p:
             p.update(type="skill", why=d["why"], questXp=qx, levelNow=lv_from,
                      title=f"Train {s} {lv} to {d['level']}" if lv == lv_from else f"Train {s} {lv} to {d['level']} (after quest XP)")

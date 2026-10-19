@@ -6,7 +6,7 @@ import threading
 import time
 
 from . import (
-    access, account, analytics, brief, coach, edge, extras, features, fills, forecast, forecast_eval, hold,
+    access, account, analytics, brief, coach, edge, extras, farming, features, fills, forecast, forecast_eval, hold,
     market, networth, news, quests, push, recipes, setups, skillguides, targets, wealth,
 )
 from .config import DATA_DIR
@@ -515,8 +515,8 @@ class Engine:
             self._err("news", e)
 
     def refresh_quests(self):
-        """Quest data, skill training guides, boss setups and item IDs from the Wiki, at most
-        weekly (about 35 bulk requests, a second apart). Demo uses the shipped snapshots."""
+        """Quest data, skill training guides, farming runs, boss setups and item IDs from the Wiki,
+        at most weekly (about 45 bulk requests, a second apart). Demo uses the shipped snapshots."""
         if getattr(self.client, "is_demo", False) or self.cfg.get("quests_enabled", True) is False:
             return
         try:
@@ -534,7 +534,12 @@ class Engine:
         except Exception as e:
             self._err("skillguides", e)
         try:
-            extra = setups.referenced_names(skillguides.load(self.db), quests.load(self.db))
+            farming.refresh(self.db, self.client)
+        except Exception as e:
+            self._err("farming", e)
+        try:
+            extra = setups.referenced_names(skillguides.load(self.db), quests.load(self.db)) | \
+                farming.referenced_names(farming.load(self.db))
             setups.refresh(self.db, self.client, list(access.BOSSES), extra, set(self.name_index()))
         except Exception as e:
             self._err("setups", e)

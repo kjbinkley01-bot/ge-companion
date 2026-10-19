@@ -472,6 +472,7 @@ const PAGE_ICONS = {
   cycles: "M2 12c2.5-6 5.5-6 8 0s5.5 6 8 0 M18 12c1-2.4 2.2-3.6 4-4 M6 18v3 M14 3v3",
   planner: "M4 4h16v16H4z M8 9l2 2 4-4 M8 15h8",
   setups: "M6 3h12v4H6z M4 9h16v12H4z M9 13h6 M9 17h6",
+  runs: "M12 21v-9 M12 12c0-4 3-7 8-7 0 4-3 7-8 7z M12 15c0-3-2.5-5-6.5-5 0 3 2.5 5 6.5 5z M5 21h14",
   watch: "M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z",
   alerts: "M6 16v-5a6 6 0 0 1 12 0v5l2 2H4z M10 21h4",
   market: "M4 20V10 M10 20V4 M16 20v-8 M22 20H2",
@@ -490,7 +491,7 @@ const PAGE_GROUPS = [
   ["Trade", [["terminal", "Terminal"], ["flips", "Flip finder"], ["cycles", "Cycles"], ["watch", "Watchlist"], ["alerts", "Alerts"]]],
   ["Market", [["market", "Market"], ["movers", "Movers"], ["news", "News"]]],
   ["Research", [["forecast", "Forecast"], ["backtest", "Backtest"]]],
-  ["Quests and goals", [["planner", "Planner"], ["setups", "Setups"]]],
+  ["Quests and goals", [["planner", "Planner"], ["setups", "Setups"], ["runs", "Farming runs"]]],
   ["Skilling and tools", [["money", "Money making"], ["alch", "High alch"], ["decant", "Decanting"], ["account", "Account"], ["settings", "Settings"]]],
 ];
 const PAGE_LABEL = Object.fromEntries(PAGE_GROUPS.flatMap(([, p]) => p));
@@ -2959,7 +2960,7 @@ function taskCard(t, i) {
   const cost = (g) => (g == null ? " · cost not listed" : g > 0.05 ? ` · about ${gp(Math.round(g * 100) / 100)} gp/xp` : g < -0.05 ? " · makes money" : " · free");
   const wl = (u, label) => (u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(label)}</a>` : esc(label));
   const segs = (t.segments || []).map((sg) => `<div class="pl-st"><span class="pl-lv">${sg.from} to ${sg.to}</span>
-      <div><b>${sg.method ? wl(sg.url, sg.method) : "No method found here"}</b>${sg.hasSetup ? ` <a class="pl-setup small" data-setup="${esc(`method|${t.skill}|${sg.method}`)}">Setup</a>` : ""} <span class="muted">· ${gp(sg.xp)} XP${sg.xph ? ` at about ${short(sg.xph)} XP/h` : ""}${cost(sg.gpPerXp)}</span>
+      <div><b>${sg.method ? wl(sg.url, sg.method) : "No method found here"}</b>${sg.hasSetup ? ` <a class="pl-setup small" data-setup="${esc(`method|${t.skill}|${sg.method}`)}">Setup</a>` : ""}${sg.method === "Farming runs" ? ` <a class="pl-setup small" data-tab="runs">Your runs</a>` : ""} <span class="muted">· ${gp(sg.xp)} XP${sg.xph ? ` at about ${short(sg.xph)} XP/h` : ""}${cost(sg.gpPerXp)}</span>
       ${sg.summary ? `<div class="muted">${esc(sg.summary)}</div>` : ""}
       ${sg.notes && sg.notes.length ? `<div class="muted">${sg.notes.map(esc).join(" · ")}</div>` : ""}
       ${sg.items && sg.items.length ? `<details><summary class="muted">${sg.items.length} items in the Wiki's setup</summary>${sg.items.map(esc).join(", ")}</details>` : ""}</div>
@@ -3033,10 +3034,105 @@ renderers.planner = async function (host) {
     </div>`;
   bindRowClicks(out);
   $$("[data-setup]", out).forEach((a) => (a.onclick = (e) => { e.preventDefault(); showSetup(a.dataset.setup); }));
+  $$("a[data-tab]", out).forEach((a) => (a.onclick = (e) => { e.preventDefault(); showTab(a.dataset.tab); }));
   if ($("#plWatch", out)) $("#plWatch", out).onclick = async () => {
     for (const s of p.shopping.filter((x) => x.buy && !S.watch.has(x.id))) { await api("/api/watchlist", { method: "POST", body: { id: s.id } }); S.watch.add(s.id); }
     toast("Watching", "Every item on the shopping list is on your watchlist.");
   };
+};
+
+// Farming runs: best crops, patches and teleports for the account --------------------
+const RN = Object.assign({ mode: "xp", open: {} }, store.get("rn", {}));
+const RN_KIND = { herb: "Herb", tree: "Tree", fruit: "Fruit tree", calquat: "Calquat", celastrus: "Celastrus", hardwood: "Hardwood", allotment: "Allotment", flower: "Flower", hops: "Hops", bush: "Bush" };
+const RN_COMPOST = { none: "no compost", compost: "compost", supercompost: "supercompost", ultracompost: "ultracompost" };
+function rnEvery(min) { return !min ? "-" : min < 90 ? `${Math.round(min)} min` : min < 2880 ? `${+(min / 60).toFixed(min < 600 ? 1 : 0)} h` : `${+(min / 1440).toFixed(1)} days`; }
+function rnCrop(c) {
+  if (!c) return "";
+  const care = c.pay ? `pay the gardener ${c.protection && c.protection[1] > 1 ? c.protection[1] + " x " : ""}${esc((c.protection || [""])[0])}` : c.guarded ? "guarded by the flower" : RN_COMPOST[c.compost];
+  return `<b>${esc(c.crop)}</b> <span class="muted small">${care}${c.survival < 0.995 ? ` · ${Math.round(c.survival * 100)}% survive` : ""}${c.harvest && c.kind !== "flower" ? ` · ${c.harvest.toFixed(1)} ${c.kind === "fruit" || c.kind === "calquat" ? "fruit" : "picked"}` : ""}</span>`;
+}
+function rnStopRow(s) {
+  const t = s.teleport || {};
+  const marks = [s.traits.diseaseFree ? `<span class="rn-mark" title="This patch can't catch disease">disease free</span>` : "",
+    s.traits.yieldBonus ? `<span class="rn-mark" title="Your diary gives this patch more herbs">+${Math.round(s.traits.yieldBonus * 100)}% yield</span>` : "",
+    s.traits.falador ? `<span class="rn-mark">+10% XP</span>` : ""].join("");
+  const tele = t.text ? `${esc(t.text)}${t.bring && t.bring.length ? `<div class="muted small">Bring ${t.bring.map((b) => esc(b) + (t.buy.includes(b) ? " (buy)" : "")).join(", ")}</div>` : ""}${t.missing && t.missing.length ? `<div class="neg small">${arrow(-1)}You'd need ${esc(t.missing.join(", "))}, so expect a slower route</div>` : ""}` : `<span class="muted">-</span>`;
+  return `<tr class="static"><td><b>${esc(s.place)}</b><div class="muted small">${esc(RN_KIND[s.kind] || s.kind)}${s.count > 1 ? ` x${s.count}` : ""}</div></td><td>${rnCrop(s.crop)}${marks ? `<div>${marks}</div>` : ""}</td><td class="small">${tele}</td><td class="num">${s.crop ? gp(Math.round(s.crop.xp * s.count)) : ""}</td><td class="num">${s.crop ? signed(Math.round(s.crop.profit * s.count), short) : ""}</td></tr>`;
+}
+function rnCard(r, mode, best) {
+  const open = RN.open[r.key] ?? best;
+  const kinds = r.kinds.filter((k) => r.crops[k]);
+  const head = `<div class="rn-sum"><div><h3>${esc(r.title)}${best ? ` <span class="rn-best">Best use of your time</span>` : ""}</h3>
+      <div class="muted small">${r.patches} patches at ${r.places} places · ${r.minutes} min · ready every ${rnEvery(r.growth)}${r.locked.length ? ` · ${r.locked.length} locked` : ""}</div></div>
+    <div class="rn-nums"><div><span class="k">XP a run</span><b>${gp(Math.round(r.xp))}</b></div><div><span class="k">Profit</span><b class="${r.profit >= 0 ? "pos" : "neg"}">${signed(Math.round(r.profit), short)}</b></div><div><span class="k">${mode === "xp" ? "XP an hour" : "gp an hour"}</span><b>${short(mode === "xp" ? r.xpPerHour : r.profitPerHour)}</b></div></div></div>`;
+  const usable = r.stops.filter((s) => s.usable);
+  return `<details class="card rn-card" data-k="${esc(r.key)}" ${open ? "open" : ""}><summary>${head}</summary>
+    <div class="rn-crops">${kinds.map((k) => { const alts = (r.alternatives[k] || []).slice(1, 4); return `<div class="rn-crop"><span class="k">${esc(RN_KIND[k] || k)}</span>${rnCrop(r.crops[k])}<div class="muted small">${short(r.crops[k].cost)} a patch${r.crops[k].value ? `, worth ${short(r.crops[k].value)}` : ""}${r.crops[k].gpPerXp != null && r.crops[k].gpPerXp > 0 ? `, ${r.crops[k].gpPerXp.toFixed(1)} gp/XP` : ""}</div>${alts.length ? `<div class="muted small">Next best: ${alts.map((a) => `${esc(a.crop)} (${mode === "xp" ? gp(Math.round(a.xp)) + " XP" : signed(Math.round(a.profit), short)})`).join(", ")}</div>` : ""}</div>`; }).join("")}</div>
+    <table class="rn-stops">${thead([{ label: "Patch" }, { label: "Plant" }, { label: "Getting there" }, { label: "XP", num: 1 }, { label: "Profit", num: 1 }], null)}<tbody>${usable.map(rnStopRow).join("")}</tbody></table>
+    ${r.locked.length ? `<div class="rn-locked small"><b>Locked for now</b>${r.locked.map((s) => `<div><span class="muted">${esc(s.place)} ${esc((RN_KIND[s.kind] || s.kind).toLowerCase())}:</span> ${esc(s.needs.join(", "))}</div>`).join("")}</div>` : ""}
+    ${(r.notes || []).length ? `<p class="small muted">${r.notes.map(esc).join(" ")}</p>` : ""}
+    <div class="rn-actions"><button class="btn primary" data-copy="run|${esc(r.key)}|${mode}">Copy for Inventory Setups</button><button class="btn" data-setup="run|${esc(r.key)}|${mode}">Open setup</button>
+      <span class="muted small">Per day, doing it each time it's ready (up to ${Math.round(r.perDay.runs * 10) / 10} a day): ${gp(Math.round(r.perDay.xp))} XP, ${signed(Math.round(r.perDay.profit), short)}. <a href="${esc(r.url)}" target="_blank" rel="noopener">Wiki route</a></span></div>
+  </details>`;
+}
+renderers.runs = async function (host) {
+  host.innerHTML = `<h2>Farming runs</h2>
+    <p class="lede">Every run from the Wiki's Farming runs guide, planned for your account: the best crop for each patch at your level, compost or a paid gardener (whichever is worth it), the flower that guards your allotments, the quickest teleport you can use with what's in your bank, and which patches your quests and diaries unlock. Each run exports as an Inventory Setups setup.</p>
+    <div class="rn-bar"><div class="seg" id="rnMode">${[["xp", "Most XP"], ["value", "Best value"]].map(([k, l]) => `<button data-k="${k}" class="${RN.mode === k ? "on" : ""}">${l}</button>`).join("")}</div>
+      <details class="rn-unlocks" id="rnUnlocks"><summary class="btn">Diaries and unlocks</summary><div class="card" id="rnUnlockBox"></div></details></div>
+    <div id="rnOut"><div class="muted small">Planning runs...</div></div>`;
+  $$("#rnMode [data-k]", host).forEach((b) => (b.onclick = () => { RN.mode = b.dataset.k; store.set("rn", RN); renderers.runs(host); }));
+  let p;
+  try { p = await api("/api/runs?mode=" + RN.mode); } catch (e) { $("#rnOut", host).innerHTML = `<div class="notice">${esc(e.message)}</div>`; return; }
+  $("#rnUnlockBox", host).innerHTML = `<p class="small muted" style="margin-top:0">The plugin can't see achievement diaries, so tick what you have.</p>${Object.entries(p.unlockLabels).map(([k, l]) => `<label class="rn-check"><input type="checkbox" data-u="${k}" ${p.unlocks.includes(k) ? "checked" : ""}> ${esc(l)}</label>`).join("")}`;
+  $$("[data-u]", host).forEach((c) => (c.onchange = async () => {
+    await api("/api/runs/unlocks", { method: "POST", body: { unlocks: $$("[data-u]", host).filter((x) => x.checked).map((x) => x.dataset.u) } });
+    const keep = $("#rnUnlocks", host).open; await renderers.runs(host); if (keep) $("#rnUnlocks", host).open = true;
+  }));
+  const byKey = Object.fromEntries(p.runs.map((r) => [r.key, r]));
+  const rt = p.routine;
+  const title = (k) => (k === "birdhouse" ? "Bird houses" : (byKey[k] || {}).title || k);
+  const bh = p.birdhouse;
+  const c = p.compost;
+  const mode = p.mode;
+  const ranked = p.ranked.filter((k) => byKey[k]);
+  const outfit = p.outfit ? `${(p.outfit * 100).toFixed(1)}% outfit bonus` : "no Farmer's outfit";
+  $("#rnOut", host).innerHTML = `
+    ${p.accountKnown ? "" : `<div class="notice soft" style="margin-bottom:8px">Your levels and quests aren't known yet, so this assumes level 99 with everything unlocked. Log in with the RuneLite plugin running and it fills in within a minute.</div>`}
+    <div class="tiles">
+      <div class="tile"><div class="k">Farming</div><div class="v">${p.levels.Farming}</div><div class="s">${outfit}${p.owned["Magic secateurs"] ? ", magic secateurs" : ""}</div></div>
+      <div class="tile"><div class="k">Routine XP a day</div><div class="v">${short(rt.perDay.xp)}</div><div class="s">about ${Math.round(rt.perDay.minutes)} min of runs</div></div>
+      <div class="tile"><div class="k">Routine profit a day</div><div class="v ${rt.perDay.profit >= 0 ? "pos" : "neg"}">${signed(Math.round(rt.perDay.profit), short)}</div><div class="s">${mode === "xp" ? "while going for XP" : "best value crops"}</div></div>
+      <div class="tile"><div class="k">Best run now</div><div class="v rn-v">${esc(title(p.ranked[0] || ""))}</div><div class="s">${p.ranked[0] ? `${short((byKey[p.ranked[0]] || bh)[mode === "xp" ? "xpPerHour" : "profitPerHour"])} ${mode === "xp" ? "XP" : "gp"} an hour of play` : ""}</div></div>
+    </div>
+    <div class="card rn-routine"><h3 style="margin-top:0">Your routine</h3>
+      <p class="small muted" style="margin-top:0">One choice from each group of runs that share patches, ${mode === "xp" ? "for the most XP a day" : "for the most profit a day (trees by the least gp per XP, since they cost money)"}, doing each run when it's ready.</p>
+      <table>${thead([{ label: "Group" }, { label: "Do" }, { label: "Each run", num: 1 }, { label: "Ready every", num: 1 }, { label: "XP a day", num: 1 }, { label: "Profit a day", num: 1 }], null)}<tbody>
+      ${rt.groups.map((g) => `<tr class="static"><td class="muted">${esc(g.group)}</td><td>${g.runs.map((k) => `<a class="rn-jump" data-k="${esc(k)}">${esc(title(k))}</a>`).join(" + ")}</td><td class="num">${gp(Math.round(g.xp))} XP · ${g.minutes} min</td><td class="num">${g.runs.map((k) => rnEvery((byKey[k] || bh).growth)).join(" / ")}</td><td class="num">${short(g.perDay.xp)}</td><td class="num ${g.perDay.profit >= 0 ? "pos" : "neg"}">${signed(Math.round(g.perDay.profit), short)}</td></tr>`).join("")}</tbody></table></div>
+    <div class="rn-grid"><div>${ranked.map((k, i) => rnCard(byKey[k], mode, i === 0)).join("")}
+      ${p.runs.filter((r) => !r.patches).map((r) => `<div class="card rn-card rn-off"><b>${esc(r.title)}</b> <span class="muted small">${r.locked.length ? esc([...new Set(r.locked.flatMap((s) => s.needs))].slice(0, 4).join(", ")) : "nothing to plant yet"}</span></div>`).join("")}</div>
+      <div>
+        <div class="card"><h3 style="margin-top:0">Bird houses</h3>${bh.house ? `
+          <p class="small" style="margin-top:0"><b>${esc(bh.house.item)}</b> on the four Fossil Island spots with ${esc(bh.seed)} (${bh.seedAmount} each). ${bh.build ? `You can build them: ${esc(bh.logs)} and a clockwork each (${gp(Math.round(bh.craftXp))} Crafting XP).` : "Buy them built; your Crafting is too low to make this one."}</p>
+          <div class="rn-nums"><div><span class="k">Hunter XP a run</span><b>${gp(Math.round(bh.xp))}</b></div><div><span class="k">Cost</span><b class="neg">${short(bh.cost)}</b></div><div><span class="k">Ready every</span><b>${bh.growth} min</b></div></div>
+          ${bh.needs.length ? `<p class="neg small">${arrow(-1)}Needs ${esc(bh.needs.join(", "))}</p>` : ""}
+          <p class="small muted">${esc(bh.note)}</p><div class="rn-actions"><button class="btn primary" data-copy="run|birdhouse">Copy for Inventory Setups</button><button class="btn" data-setup="run|birdhouse">Open setup</button></div>` : `<p class="muted small">${esc((bh.needs || []).join(", "))}</p>`}</div>
+        <div class="card" style="margin-top:8px"><h3 style="margin-top:0">Compost: make or buy</h3>
+          ${c.ingredient ? `<p class="small" style="margin-top:0">The cheapest supercompost ingredient now is <b>${esc(c.ingredient)}</b> at ${gp(c.ingredientPrice)}; supercompost sells for ${c.supercompost ? gp(c.supercompost) : "?"}.</p>
+          <table><tbody>
+            <tr class="static"><td>Make supercompost</td><td class="num ${c.saveSuper > 0 ? "pos" : "neg"}">${c.saveSuper != null ? signed(Math.round(c.saveSuper), gp) + " a bucket vs buying" : "-"}</td></tr>
+            <tr class="static"><td>Make ultracompost <span class="muted small">(+25 volcanic ash a bin)</span></td><td class="num ${c.saveUltra > 0 ? "pos" : "neg"}">${c.saveUltra != null ? signed(Math.round(c.saveUltra), gp) + " a bucket vs buying" : "-"}</td></tr>
+            <tr class="static"><td>${c.bins} bins a run</td><td class="num">${c.profitSell != null ? signed(Math.round(c.profitSell * 15 * c.bins), short) + " if sold" : "-"}</td></tr></tbody></table>` : `<p class="muted small">No ingredient prices yet.</p>`}
+          <div class="rn-actions"><button class="btn" data-copy="run|supercompost">Copy supercompost setup</button><button class="btn" data-copy="run|willow">Copy willow branch setup</button></div></div>
+        <p class="small muted">Yields use the Wiki's chance to save a harvest at your level, disease uses its per growth chances by compost (herbs, fruit trees, maples and magic trees; other crops borrow the nearest row), and minutes per stop are estimates. Prices: instant buy to buy, instant sell after tax to sell. Data: ${esc(p.source)}.</p>
+      </div></div>`;
+  $$(".rn-card[data-k]", host).forEach((d) => d.addEventListener("toggle", () => { RN.open[d.dataset.k] = d.open; store.set("rn", RN); }));
+  $$(".rn-jump", host).forEach((a) => (a.onclick = () => { const d = $(`.rn-card[data-k="${a.dataset.k}"]`, host); if (d) { d.open = true; d.scrollIntoView({ behavior: "smooth", block: "start" }); } }));
+  $$("[data-setup]", host).forEach((b) => (b.onclick = () => showSetup(b.dataset.setup)));
+  $$("[data-copy]", host).forEach((b) => (b.onclick = async () => {
+    const s = await api("/api/setups/one?key=" + encodeURIComponent(b.dataset.copy));
+    toast(await stCopy(s.portable) ? "Copied" : "Copy failed", `${s.name}: in RuneLite open Inventory Setups, choose Import setup and paste.`);
+  }));
 };
 
 // Setups: gear and inventories for the Inventory Setups plugin ------------------------
@@ -3073,7 +3169,7 @@ function stDownload(name, data) {
 }
 renderers.setups = async function (host) {
   host.innerHTML = `<h2>Setups</h2>
-    <p class="lede">Gear and inventories for the Inventory Setups plugin, fitted to what you own. Boss setups use the Wiki's ranked gear for each slot and pick the best you have; skilling setups come from the training guides and quest setups from the items to bring. Copy one and use Import setup in Inventory Setups, or save a file of several for its Mass Import. Your own sets are built here too.</p>
+    <p class="lede">Gear and inventories for the Inventory Setups plugin, fitted to what you own. Boss setups use the Wiki's ranked gear for each slot and pick the best you have; skilling setups come from the training guides, farming runs from the run planner and quest setups from the items to bring. Copy one and use Import setup in Inventory Setups, or save a file of several for its Mass Import. Your own sets are built here too.</p>
     <div class="st-grid"><div class="card st-list" id="stList"><div class="muted small">Loading...</div></div><div id="stOut"></div></div>`;
   try { ST_CAT = await api("/api/setups"); } catch (e) { $("#stList", host).innerHTML = `<div class="notice">${esc(e.message)}</div>`; return; }
   if (!ST.key) ST.key = (ST_CAT.plan[0] || {}).key || (ST_CAT.bosses[0] && ST_CAT.bosses[0].styles[0].key);
@@ -3091,8 +3187,10 @@ function stList(host) {
     <div class="st-grp"><div class="section-head"><h4>My sets</h4><button class="btn small" id="stNew">New set</button></div>${c.mine.length ? c.mine.map((r) => stRow(r.key, r.title, null, r)).join("") : `<div class="muted small">None yet. Start one here, or copy any setup below and change it.</div>`}</div>
     <div class="st-grp"><h4>Bosses and raids</h4>${c.bosses.map((b) => `<details class="st-boss" data-b="${esc(b.boss)}" ${bossOpen(b) ? "open" : ""}><summary>${esc(b.boss)} <span class="muted small">${b.styles.length}</span></summary>${b.styles.map((s) => stRow(s.key, s.style, null, s)).join("")}</details>`).join("")}</div>
     <div class="st-grp"><h4>Skilling</h4>${c.skilling.map((m) => stRow(m.key, m.method, `${m.skill} ${m.lo} to ${m.hi}`)).join("")}</div>
+    ${(c.runs || []).length ? `<div class="st-grp"><h4>Farming runs</h4><div class="muted small">Crops and teleports picked for your level on the <a class="rn-link">Farming runs</a> page.</div>${c.runs.map((r) => stRow(r.key, r.title)).join("")}</div>` : ""}
     <div class="st-grp"><h4>Quests</h4><input class="input" id="stQ" placeholder="Find a quest" value="${esc(ST.q)}">${quests.map((r) => stRow(r.key, r.title, `${r.items} items`)).join("")}</div>`;
   $$(".st-row", host).forEach((b) => (b.onclick = () => { ST.key = b.dataset.k; ST_EDIT = null; store.set("st", ST); stList(host); stDetail(host); }));
+  if ($(".rn-link", host)) $(".rn-link", host).onclick = () => showTab("runs");
   $$(".st-boss", host).forEach((d) => d.addEventListener("toggle", () => { ST.open[d.dataset.b] = d.open; store.set("st", ST); }));
   const qi = $("#stQ", host);
   qi.oninput = () => { ST.q = qi.value; store.set("st", ST); const pos = qi.selectionStart; stList(host); const n = $("#stQ", host); n.focus(); n.setSelectionRange(pos, pos); };

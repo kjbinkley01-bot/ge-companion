@@ -126,13 +126,33 @@ A free alternative to GE Tracker premium, built only on public, read-only data.
   Infobox Bonuses; sentence-case retry), 50 a request. Kv `setups_wiki`, snapshot
   `geco/setups_snapshot.json`. Fitting (`holdings_live`, all containers): best owned tier per
   slot, else `budget` (cheapest in the lowest tier sold) and `best`; `upgrade` is the next tier up.
-  Wiki stacks (qty 10,000+) mean any amount. Keys `boss|Name|i`, `quest|Name`, `method|Skill|Name`,
+  Wiki stacks (qty 10,000+) mean any amount. Keys `boss|Name|i`, `quest|Name`, `method|Skill|Name`, `run|key`,
   `mine|id` (table `setups_custom`). `portable()` writes InventorySetupPortable JSON (inv 28,
   eq 14 by EquipmentInventorySlot, rp, afi, hc "#AARRGGBB", fuzzy items, a zig-zag layout);
   unowned slots hold the budget pick. Inventory Setups rewrites its stored setups from memory, so
   never write its config: setups go in through its Import (one) or Mass Import (a file from
   `/api/setups/file`, written to `<plugin folder>/setups/`). Verified against its own classes.
-* Data versions: `quests.VERSION`, `skillguides.VERSION` and `setups.VERSION` are stored with the
+* `geco/farming.py`: farming and bird house runs. Data (weekly with the quests, snapshot
+  `geco/farming_snapshot.json`): one `expandtemplates` request renders the Wiki's seed tables
+  (`<Patch> patch/Seeds`, `Special patches/Seeds`), herb patch table, disease table and bird house
+  tables (`@@@key@@@` markers split them), then the "Farming runs" page (`parse_runs`: each
+  `== Run ==` with requirements, example setup via `setups.examples`, `#[[Place]] kind patch:`
+  stops with `##` teleport options quickest first; kinds are read only after the place link), then
+  seed pages' `{{Farming yield calculator|low|high}}` (missing ones borrow the nearest level).
+  Model: herb-like crops (herb, allotment, hops) harvest lives 3 + compost tier, chance to save
+  `chance_to_save` (+10% magic secateurs, +5% cape, diary patch bonus), disease survival
+  (1-p)^cycles from the table (other crops borrow the herb or maple row), gardener payment as an
+  option; `utility` picks per patch (Most XP pays at most `XP_GP` gp per extra XP; value = profit,
+  trees least gp per XP). `choose_allotment` picks allotment and flower together (`FLOWER_GUARDS`).
+  `pick_teleport`: items in an option are alternatives ("X or Y"), owned first, else the
+  cheapest GE one (counts 1.5 places slower), quest and level rules, spell tablets below the
+  Magic level, else the option missing least. Stops lock on `PLACE_NEEDS`, guild levels and the
+  run's requirement lines. `routine` takes one option per `GROUPS` entry by XP or profit a day
+  (runs a day capped at `MAX_RUNS_DAY`). Unlocks the plugin can't see (diaries, planted spirit
+  trees) live in kv `farming_unlocks`. `run_setup` builds the Inventory Setups setup (setup keys
+  `run|<key>[|value]`, also `birdhouse`, `supercompost`, `willow`); `training_methods` feeds the
+  planner a "Farming runs" method. Endpoints `/api/runs?mode=`, POST `/api/runs/unlocks`.
+* Data versions: `quests.VERSION`, `skillguides.VERSION`, `setups.VERSION` and `farming.VERSION` are stored with the
   data; a stored copy from another version is ignored (snapshot used) and fetched again at once.
 * `geco/account.py`: ingests plugin files incrementally (byte offsets, whole lines only), keeps
   latest GE offers, reconstructs fills from cumulative offer changes, FIFO matches them into
@@ -266,7 +286,10 @@ v8: quest and goal planner (Wiki quest data, guide based time estimates scaled t
 boss access, skill training and boosts from the Wiki's training guides, ordered plan, shopping
 list), plugin quest and level events, panel Goal tab; Setups page (Wiki boss, skilling and quest
 setups fitted to your bank, custom sets, export to Inventory Setups).
-Open questions to verify in game: whether a sell offer's `spent` is before or after tax
+v9: Farming runs page (every Wiki run plus bird houses, crops, compost, payments, guarding
+flowers, teleports and locks for your account, daily routine, make or buy compost, run setups),
+Farming runs as a planner training method.
+Open questions to verify in game: farming minutes per stop, whether a sell offer's `spent` is before or after tax
 (`account.sell_split` handles both), how promptly collection box containers update, and whether every `Quest` enum name matches
 the Wiki title (`quests.norm` covers "The" and "(quest)").
 Hiscores response format verified against the live endpoint (Sep 2026).

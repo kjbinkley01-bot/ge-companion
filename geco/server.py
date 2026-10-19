@@ -433,6 +433,10 @@ def make_handler(app):
                     return self._send(404, {"error": "unknown setup"})
                 st["portable"] = json.dumps(setups.portable(st), separators=(",", ":"))
                 return self._send(200, st)
+            if path == "/api/runs":
+                from . import farming
+                mode = "value" if q.get("mode") == "value" else "xp"
+                return self._send(200, farming.plan_all(D, E, mode, acct=q.get("acct") or None))
             if path == "/api/setups/items":
                 from . import setups
                 return self._send(200, setups.search_items(E, setups.load(D).get("items"), q.get("q")))
@@ -578,6 +582,12 @@ def make_handler(app):
                 from . import setups
                 sid = setups.custom_save(D, b.get("id"), b.get("name"), b.get("data") or {}, now)
                 return self._send(200, {"id": sid, "key": f"mine|{sid}"})
+            if path == "/api/runs/unlocks":
+                # Diaries and unlocks the plugin cannot see, ticked on the Runs page.
+                from . import farming
+                keep = [u for u in b.get("unlocks") or [] if u in farming.UNLOCKS]
+                D.kv_set("farming_unlocks", keep)
+                return self._send(200, {"unlocks": keep})
             if path == "/api/setups/custom/delete":
                 from . import setups
                 setups.custom_delete(D, b["id"])
