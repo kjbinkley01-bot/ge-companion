@@ -16,7 +16,7 @@ A free alternative to GE Tracker premium, built only on public, read-only data.
 
 ## Layout
 * `run.py`: entry point (`--demo` for offline synthetic data, `--no-browser`, `--port`,
-  `--background`, `--open`, `--runelite`, `--install`, `--uninstall`).
+  `--background`, `--open`, `--runelite`, `--restart`, `--install`, `--uninstall`).
 * `geco/desktop.py`: Windows desktop use without console windows. `install.bat` (once) sets a
   HKCU Run key (`pythonw run.py --background`, single instance, logs to
   `data/bankstanding.log`, retries the item list every minute if offline) and .lnk icons on the
@@ -25,7 +25,12 @@ A free alternative to GE Tracker premium, built only on public, read-only data.
   run` hidden (log `data/runelite.log`, message box on failure). `/api/desktop` backs the
   Settings card "On this PC". RuneLite enables developer mode (needed for sideloaded plugins)
   only when no launcher version is set, so the plugin cannot load in the launcher's client;
-  the build checks for a new RuneLite release every 30 minutes.
+  the build checks for a new RuneLite release every 30 minutes. Updates while running: `code_stamp()` (newest
+  mtime of run.py and geco/*.py) is taken at server start and reported in `/api/status` `code`
+  ({started, onDisk, stale}); the dashboard shows a restart bar (`checkServerCode`, also on any
+  "unknown endpoint"). `--restart` (`restart.bat`, Start menu "Restart Bankstanding") calls POST
+  `/api/quit`, else ends the process listening on the port (netstat and taskkill), then starts the
+  code on disk; POST `/api/restart` spawns that from the running server; `--open` restarts a stale one.
 * `geco/wiki.py`: Wiki prices API (`/mapping`, `/latest`, `/5m`, `/1h`, `/timeseries`) and
   hiscores (`index_lite.json`, per account type).
 * `geco/engine.py`: background poller. Backfills missing hourly windows (`backfill_hours`,

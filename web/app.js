@@ -63,8 +63,44 @@ async function api(path, opts = {}) {
   const r = await fetch(path, o);
   let data = null;
   try { data = await r.json(); } catch (e) { /* non JSON */ }
-  if (!r.ok) throw new Error((data && data.error) || `Request failed (${r.status})`);
+  if (!r.ok) {
+    if (data && data.error === "unknown endpoint") {
+      checkServerCode(true);
+      throw new Error("This page needs a newer Bankstanding than the one running in the background. Restart Bankstanding (see the bar at the top) and it will work.");
+    }
+    throw new Error((data && data.error) || `Request failed (${r.status})`);
+  }
   return data;
+}
+
+// After an update the files on disk are new but the server started earlier may still run the
+// old code: say so, and offer a restart (servers from before this check can't restart themselves).
+let CODE_BANNER = false;
+async function checkServerCode(force) {
+  if (CODE_BANNER && !force) return;
+  let st = null;
+  try { st = await (await fetch("/api/status")).json(); } catch (e) { return; }
+  const old = !st.code;
+  if (!old && !st.code.stale) return;
+  if (CODE_BANNER) return;
+  CODE_BANNER = true;
+  const bar = document.createElement("div");
+  bar.className = "code-bar";
+  bar.innerHTML = old
+    ? `<b>Bankstanding was updated, but the copy running in the background is from before the update.</b> To finish updating, double-click <b>restart.bat</b> in your Bankstanding folder (or restart your PC). This only needs doing once; later updates can restart from here.`
+    : `<b>Bankstanding was updated while it was running.</b> Restart it to use the new version. <button class="btn primary small" id="codeRestart">Restart now</button>`;
+  document.body.prepend(bar);
+  const btn = $("#codeRestart");
+  if (btn) btn.onclick = async () => {
+    btn.disabled = true; btn.textContent = "Restarting...";
+    try { await fetch("/api/restart", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }); } catch (e) { /* the server is going away */ }
+    const was = st.code.started;
+    for (let i = 0; i < 90; i++) {
+      await new Promise((r) => setTimeout(r, 2000));
+      try { const s2 = await (await fetch("/api/status")).json(); if (s2.code && s2.code.started !== was && s2.priced) { location.reload(); return; } } catch (e) { /* still starting */ }
+    }
+    btn.textContent = "Still restarting: reload in a minute";
+  };
 }
 
 function toast(title, msg, onClick) {
@@ -4491,6 +4527,8 @@ async function loadMarket() {
 
 (async function boot() {
   try { const a = await api("/api/alerts"); ALERT_KINDS = a.kinds; PCT_KINDS = new Set(a.pctKinds); NOVAL_KINDS = new Set(a.noValueKinds); } catch (e) { /* ignore */ }
+  checkServerCode();
+  setInterval(checkServerCode, 10 * 60 * 1000);
   loadAccounts();
   await loadMarket();
   await pollNotifications();

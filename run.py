@@ -8,6 +8,7 @@ Windows desktop use (see install.bat):
     --install / --uninstall   start with Windows plus desktop and Start menu icons
     --background              run with no window, logging to data/bankstanding.log
     --open                    start in the background if needed, then open the dashboard
+    --restart                 stop the running Bankstanding and start the code on disk (after an update)
     --runelite                start if needed, then open RuneLite with the plugin
 """
 import argparse
@@ -34,13 +35,14 @@ def main():
     ap.add_argument("--background", action="store_true", help="no window; log to data/bankstanding.log")
     ap.add_argument("--open", action="store_true", help="start in the background if needed, open the dashboard")
     ap.add_argument("--runelite", action="store_true", help="start if needed, open RuneLite with the plugin")
+    ap.add_argument("--restart", action="store_true", help="stop the running server and start the code on disk")
     ap.add_argument("--install", action="store_true", help="start with Windows, add desktop and Start menu icons")
     ap.add_argument("--uninstall", action="store_true", help="undo --install (keeps your data)")
     args = ap.parse_args()
 
     cfg = config.load()
     port = args.port or int(cfg.get("port", 8765))
-    if args.install or args.uninstall or args.open or args.runelite:
+    if args.install or args.uninstall or args.open or args.runelite or args.restart:
         from geco import desktop
         if args.install:
             sys.exit(desktop.install(port))
@@ -48,6 +50,8 @@ def main():
             sys.exit(desktop.uninstall())
         if args.open:
             sys.exit(0 if desktop.open_dashboard(port) else 1)
+        if args.restart:
+            sys.exit(0 if desktop.restart(port, open_browser=not args.no_browser) else 1)
         sys.exit(desktop.launch_runelite(port))
     if args.background:
         from geco import desktop

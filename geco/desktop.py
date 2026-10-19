@@ -23,7 +23,8 @@ RL_LOG = os.path.join(config.DATA_DIR, "runelite.log")
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 NAME = "Bankstanding"
 SHORTCUTS = [("Bankstanding", "--open", "Open the Bankstanding dashboard"),
-             ("Bankstanding RuneLite", "--runelite", "RuneLite with the Bankstanding plugin")]
+             ("Bankstanding RuneLite", "--runelite", "RuneLite with the Bankstanding plugin"),
+             ("Restart Bankstanding", "--restart", "Restart Bankstanding (after an update)")]
 IS_WIN = os.name == "nt"
 NO_WINDOW = 0x08000000  # CREATE_NO_WINDOW
 DETACHED = 0x00000008 | 0x00000200  # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
@@ -60,6 +61,105 @@ def running(port, timeout=1.5):
         return False
 
 
+def code_stamp():
+    """A fingerprint of the app's code on disk: the newest change to run.py or geco/*.py. A running
+    server reports the one it started with, so an update made while it runs can be spotted."""
+    newest = 0.0
+    files = [RUN_PY] + [os.path.join(ROOT, "geco", f) for f in os.listdir(os.path.join(ROOT, "geco")) if f.endswith(".py")]
+    for f in files:
+        try:
+            newest = max(newest, os.path.getmtime(f))
+        except OSError:
+            pass
+    return int(newest)
+
+
+STARTED_STAMP = code_stamp()
+
+
+def server_status(port, timeout=1.5):
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/status", timeout=timeout) as r:
+            st = json.loads(r.read().decode("utf-8"))
+            return st if st.get("app") == "bankstanding" else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def stale(port):
+    """True when a Bankstanding server is running older code than what is on disk now (servers
+    from before this check report no stamp at all)."""
+    st = server_status(port)
+    return bool(st) and (st.get("code") or {}).get("started") != code_stamp()
+
+
+def _listening_pids(port):
+    """Process IDs listening on 127.0.0.1:port (or any address), from netstat."""
+    try:
+        if IS_WIN:
+            out = subprocess.run(["netstat", "-ano", "-p", "TCP"], capture_output=True, text=True, timeout=20,
+                                 creationflags=NO_WINDOW).stdout
+            pids = set()
+            for line in out.splitlines():
+                parts = line.split()
+                if len(parts) >= 5 and parts[0] == "TCP" and parts[3] == "LISTENING" and parts[1].endswith(f":{port}"):
+                    pids.add(int(parts[4]))
+            return pids
+        out = subprocess.run(["lsof", "-ti", f"tcp:{port}", "-sTCP:LISTEN"], capture_output=True, text=True, timeout=20).stdout
+        return {int(x) for x in out.split() if x.isdigit()}
+    except Exception:  # noqa: BLE001
+        return set()
+
+
+def stop_server(port, wait=30):
+    """Stops the Bankstanding server on this port: asks it to quit, else ends its process. Only a
+    server that answers as Bankstanding is stopped. True once the port is free."""
+    if not server_status(port):
+        return True
+    try:
+        req = urllib.request.Request(f"http://127.0.0.1:{port}/api/quit", data=b"{}", method="POST",
+                                     headers={"Content-Type": "application/json"})
+        urllib.request.urlopen(req, timeout=5).read()
+    except Exception:  # noqa: BLE001 - a server older than /api/quit
+        pass
+    end = time.time() + 8
+    while time.time() < end and server_status(port, timeout=1):
+        time.sleep(0.5)
+    if server_status(port, timeout=1):
+        for pid in _listening_pids(port):
+            if pid == os.getpid():
+                continue
+            try:
+                if IS_WIN:
+                    subprocess.run(["taskkill", "/PID", str(pid), "/F"], capture_output=True, timeout=20,
+                                   creationflags=NO_WINDOW)
+                else:
+                    os.kill(pid, 15)
+            except Exception:  # noqa: BLE001
+                pass
+    end = time.time() + wait
+    while time.time() < end:
+        if not running(port, timeout=1):
+            return True
+        time.sleep(0.5)
+    return False
+
+
+def restart(port, open_browser=True):
+    """Stops whatever Bankstanding is running and starts the code on disk in the background."""
+    if not stop_server(port):
+        message(f"Could not stop the Bankstanding already running on port {port}. Restart your PC, "
+                "or end pythonw.exe in Task Manager, then try again.", error=True)
+        return False
+    time.sleep(1)
+    if not ensure_running(port):
+        message(f"Bankstanding did not start within two minutes.\nThe log is in {LOG}", error=True)
+        return False
+    if open_browser:
+        webbrowser.open(f"http://127.0.0.1:{port}")
+    return True
+
+
 def _spawn(args, cwd=ROOT, log=None):
     out = open(log, "ab") if log else subprocess.DEVNULL
     kw = {"cwd": cwd, "stdin": subprocess.DEVNULL, "stdout": out, "stderr": subprocess.STDOUT if log else subprocess.DEVNULL}
@@ -71,9 +171,11 @@ def _spawn(args, cwd=ROOT, log=None):
 
 
 def ensure_running(port, wait=120):
-    """Starts the server in the background if it is not already up; True once it answers."""
+    """Starts the server in the background if it is not already up (or restarts it when it runs
+    older code than is on disk, after an update); True once it answers."""
     if running(port):
-        return True
+        if not stale(port) or not stop_server(port):
+            return True
     _spawn([pythonw(), RUN_PY, "--background", "--port", str(port)])
     end = time.time() + wait
     while time.time() < end:

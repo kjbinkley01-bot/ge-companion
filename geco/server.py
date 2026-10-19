@@ -25,7 +25,10 @@ SETTING_KEYS = ("user_agent", "latest_poll_seconds", "stale_minutes", "keep_5m_d
 
 class App:
     def __init__(self, cfg, engine, db, client):
+        from . import desktop
         self.cfg, self.engine, self.db, self.client = cfg, engine, db, client
+        self.code_started = desktop.code_stamp()  # to tell when the code on disk is newer
+        self.httpd = None
 
 
 def make_handler(app):
@@ -152,6 +155,9 @@ def make_handler(app):
                 with E.lock:
                     st = dict(E.status)
                 st["app"] = "bankstanding"
+                from . import desktop
+                on_disk = desktop.code_stamp()
+                st["code"] = {"started": app.code_started, "onDisk": on_disk, "stale": on_disk != app.code_started}
                 st["items"] = len(E.mapping)
                 st["priced"] = len(E.rows)
                 st["dbBytes"] = os.path.getsize(D.path) if os.path.exists(D.path) else 0
@@ -607,6 +613,18 @@ def make_handler(app):
                 from . import dailies, planner
                 acct = b.get("acct") or planner.main_account(D)
                 return self._send(200, {"done": dailies.mark(D, acct, b["key"], bool(b.get("done", True)), now)})
+            if path == "/api/quit":
+                # Asked by a newer copy starting up (Restart Bankstanding): finish, then stop serving.
+                self._send(200, {"ok": True})
+                if app.httpd:
+                    threading.Thread(target=app.httpd.shutdown, daemon=True).start()
+                return None
+            if path == "/api/restart":
+                # Load the code on disk: a new background copy stops this one and takes over the port.
+                from . import desktop
+                port = self.server.server_address[1]
+                desktop._spawn([desktop.pythonw(), desktop.RUN_PY, "--restart", "--no-browser", "--port", str(port)])
+                return self._send(200, {"ok": True})
             if path == "/api/runs/unlocks":
                 # Diaries and unlocks the plugin cannot see, ticked on the Runs page.
                 from . import farming
@@ -1130,4 +1148,5 @@ def serve(app, port):
     lan = app.cfg.get("lan_enabled") and len(app.cfg.get("lan_password") or "") >= 8
     httpd = ThreadingHTTPServer(("0.0.0.0" if lan else "127.0.0.1", port), make_handler(app))
     httpd.daemon_threads = True
+    app.httpd = httpd
     return httpd

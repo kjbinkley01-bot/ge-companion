@@ -989,3 +989,7 @@ tr[data-cy].sel td { background: var(--accent-bg); }
 .sl-adv.sl-skip { color: var(--muted); }
 .sl-adv.sl-do { color: var(--accent); border-color: currentColor; }
 .sl-on td { background: var(--accent-bg); }
+
+/* Server older than the files on disk */
+.code-bar { position: sticky; top: 0; z-index: 100; display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+  padding: 10px 16px; background: var(--accent-bg); border-bottom: 1px solid var(--accent); color: var(--text); font-size: 13px; }

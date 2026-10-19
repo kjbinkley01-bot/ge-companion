@@ -107,6 +107,12 @@ Accuracy notes:
 
 ## Good to know
 
+* **After an update.** If Bankstanding runs in the background (it starts with Windows after
+  `install.bat`), it keeps running the code it started with. The dashboard notices and shows a
+  bar with **Restart now**. The very first time (servers from before that check), double-click
+  `restart.bat` in the Bankstanding folder, or use **Restart Bankstanding** in the Start menu.
+  The desktop icon also restarts an outdated copy on its own. `python run.py --restart` does the same.
+
 * **Price terms.** "Instant buy" is the latest price someone paid to buy instantly, so it's
   roughly what you can sell for. "Instant sell" is roughly what you can buy for with a patient
   offer. Flip profit = instant buy minus tax minus instant sell.
